@@ -6,12 +6,32 @@
     <AssemblyName>LicenseManagement.Core</AssemblyName>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
-    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
-    <Description>Thin .NET binding over the hymmalm native license-management core. The native library is the source of truth; this assembly only marshals.</Description>
   </PropertyGroup>
 
-  <!-- Ship the native DLL next to the assembly when it has been built.
-       CI should place per-RID binaries under runtimes/<rid>/native instead. -->
+  <PropertyGroup Label="Package">
+    <PackageId>LicenseManagement.Core</PackageId>
+    <!-- CI overrides with -p:Version=<tag> on release -->
+    <Version>0.0.0-dev</Version>
+    <Authors>Hymma</Authors>
+    <Company>Hymma</Company>
+    <Description>Cross-platform License-Management.com client: a thin .NET binding over the open-source native core (hymmalm). Verifies signed licenses offline, bootstraps trials, activates receipt codes — identical behavior on every platform and in every language wrapper, because all licensing logic lives in the shared native library.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/HYMMA/license-management-core</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/HYMMA/license-management-core</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>licensing;license-management;software-licensing;jws;offline-validation;trial</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <!-- CI drops the per-platform native libraries here before dotnet pack -->
+    <None Include="runtimes/**" Pack="true" PackagePath="runtimes/" />
+  </ItemGroup>
+
+  <!-- Local development convenience: copy the locally built native DLL next to
+       the assembly when it exists. Packaged consumers get runtimes/ instead. -->
   <ItemGroup Condition="Exists('..\..\..\build\hymmalm.dll')">
     <None Include="..\..\..\build\hymmalm.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

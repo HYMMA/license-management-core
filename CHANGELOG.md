@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-10
+
+### Added
+
+- Server refusals are classified into dedicated errors (HLM_E_TRIAL_QUOTA,
+  HLM_E_PAID_FORMAT_REQUIRED, HLM_E_PLAN_LIMIT) and the server's
+  human-readable detail is captured (hlm_ffi_last_error_detail); the .NET
+  wrapper surfaces both via LicenseError / LicenseException.Detail.
+- NuGet publishing of LicenseManagement.Core (win-x64 / linux-x64 /
+  osx-arm64 native runtimes bundled) on release tags.
+
+### Changed
+
+- .NET wrapper renamed Hymma.Lm.Core -> LicenseManagement.Core to match the
+  LicenseManagement.* package family; repo renamed to license-management-core.
+- Release assets renamed to licMngm-core-<version>-<os>-<arch>.zip.
+
 ## [0.1.0] - 2026-07-10
 
 Initial release.
@@ -39,5 +56,6 @@ Initial release.
 - Built-in HTTP/fingerprint ports are Windows-only; POSIX ports planned.
 - P-256 verification favors reviewability over speed (~100 ms desktop).
 
-[Unreleased]: https://github.com/HYMMA/license-management-core/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/HYMMA/license-management-core/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/HYMMA/license-management-core/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/HYMMA/license-management-core/releases/tag/v0.1.0
