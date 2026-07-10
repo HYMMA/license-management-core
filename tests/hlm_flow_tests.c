@@ -632,6 +632,60 @@ static void test_no_retry_501(void)
     CHECK(g_sleeps == 0, "501: no backoff");
 }
 
+/* Server refusals classify into dedicated errors so wrappers can raise
+ * meaningful exceptions, and the server's human-readable detail is captured. */
+static void test_trial_quota_classified(void)
+{
+    const mock_step steps[] = {
+        STEP_POST_COMPUTER(201),
+        STEP_GET_COMPUTER,
+        { "POST", "license", "", IDEM_LICENSE, 402,
+          "{\"error\":\"trial_quota\",\"current\":250,\"limit\":250}", -1 },
+    };
+    mock_http http = { steps, 3, 0, 0 };
+
+    setup(&g_client, &http, NULL, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_check(&g_client) == HLM_E_TRIAL_QUOTA,
+          "quota refusal: classified");
+    CHECK(strcmp(g_client.last_error, "trial_quota") == 0,
+          "quota refusal: detail captured");
+}
+
+static void test_paid_format_required_classified(void)
+{
+    const mock_step steps[] = {
+        STEP_POST_COMPUTER(201),
+        STEP_GET_COMPUTER,
+        STEP_POST_LICENSE(201),
+        { "GET", GET_LICENSE_PATH, NULL, NULL, 402,
+          "{\"type\":\"https://license-management.com/errors/embedded-format-requires-receipt\","
+          "\"title\":\"Embedded license format requires an active paid receipt\","
+          "\"status\":402,\"detail\":\"Register a valid receipt code and try again.\"}", -1 },
+    };
+    mock_http http = { steps, 4, 0, 0 };
+
+    setup(&g_client, &http, NULL, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_check(&g_client) == HLM_E_PAID_FORMAT_REQUIRED,
+          "format refusal: classified");
+    CHECK(strstr(g_client.last_error, "receipt code") != NULL,
+          "format refusal: server detail captured");
+}
+
+static void test_plan_limit_classified(void)
+{
+    const mock_step steps[] = {
+        STEP_POST_COMPUTER(201),
+        STEP_GET_COMPUTER,
+        { "POST", "license", "", IDEM_LICENSE, 402,
+          "{\"error\":\"ALU limit exceeded\",\"current\":50,\"limit\":50}", -1 },
+    };
+    mock_http http = { steps, 3, 0, 0 };
+
+    setup(&g_client, &http, NULL, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_check(&g_client) == HLM_E_PLAN_LIMIT,
+          "plan limit: classified");
+}
+
 /* TimeSyncDiagnostic concept: a rolled-back local clock cannot resurrect a
  * lapsed trial when the trusted time source disagrees. Uses the legacy
  * (status-less) license so the client's own date rules decide. */
@@ -712,6 +766,9 @@ int main(int argc, char **argv)
     test_retry_after();
     test_retry_500();
     test_no_retry_501();
+    test_trial_quota_classified();
+    test_paid_format_required_classified();
+    test_plan_limit_classified();
     test_clock_tamper_detected();
     test_server_time_fallback();
 

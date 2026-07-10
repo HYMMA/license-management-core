@@ -21,6 +21,9 @@ const char *hlm_err_str(int err)
     case HLM_E_PRODUCT_MISMATCH: return "license is for a different product";
     case HLM_E_COMPUTER_MISMATCH: return "license is for a different computer";
     case HLM_E_AUTH: return "invalid API key";
+    case HLM_E_TRIAL_QUOTA: return "vendor trial quota exhausted";
+    case HLM_E_PAID_FORMAT_REQUIRED: return "this license format requires a paid receipt";
+    case HLM_E_PLAN_LIMIT: return "vendor plan limit reached";
     default: return "unknown error";
     }
 }

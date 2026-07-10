@@ -43,7 +43,10 @@ typedef enum {
     HLM_E_STORAGE = -9,        /* storage port read/write failure */
     HLM_E_PRODUCT_MISMATCH = -10, /* license is for a different product */
     HLM_E_COMPUTER_MISMATCH = -11,/* license is for a different machine */
-    HLM_E_AUTH = -12           /* 401/403 — bad API key */
+    HLM_E_AUTH = -12,          /* 401/403 — bad API key */
+    HLM_E_TRIAL_QUOTA = -13,   /* vendor's active-trial quota exhausted (402 trial_quota) */
+    HLM_E_PAID_FORMAT_REQUIRED = -14, /* product policy: this format needs a paid receipt */
+    HLM_E_PLAN_LIMIT = -15     /* vendor plan cap reached (ALU / sandbox limits) */
 } hlm_err;
 
 const char *hlm_err_str(int err);
@@ -356,6 +359,7 @@ typedef struct {
     hlm_status status;
     int has_license;
     int last_http_status;
+    char last_error[256];      /* server's human-readable refusal detail ("" if none) */
     int64_t eval_now;          /* trusted evaluation time of the last call */
     char buf[HLM_CLIENT_BUF];
     char resp[HLM_CLIENT_BUF];

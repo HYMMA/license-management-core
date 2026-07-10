@@ -271,6 +271,11 @@ HLM_API int hlm_ffi_last_http_status(hlm_ffi_client *c)
     return c == NULL ? 0 : c->client.last_http_status;
 }
 
+HLM_API const char *hlm_ffi_last_error_detail(hlm_ffi_client *c)
+{
+    return c == NULL ? "" : c->client.last_error;
+}
+
 HLM_API const char *hlm_ffi_err_name(int err)
 {
     return hlm_err_str(err);

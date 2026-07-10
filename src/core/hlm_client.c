@@ -181,9 +181,46 @@ static int send_req(hlm_client *c, const char *method, const char *path_query,
     return HLM_E_HTTP;
 }
 
-static int map_api_error(int status)
+/* Extract a human-readable refusal reason from a problem+json / error body
+ * into c->last_error, and classify the refusal into a dedicated hlm_err so
+ * wrappers can raise meaningful exceptions instead of a generic API error.
+ * Recognition is by the server's stable markers (the "error" field values
+ * and the problem-type slug), tolerant of non-JSON bodies. */
+static void capture_error_detail(hlm_client *c)
 {
-    return status == 401 || status == 403 ? HLM_E_AUTH : HLM_E_API;
+    static const char *const FIELDS[] = { "detail", "message", "title", "error" };
+    hlm_json_tok toks[32];
+    hlm_json_doc doc;
+    size_t len = strlen(c->resp);
+    int ntok = hlm_json_parse(c->resp, len, toks, 32);
+    size_t i;
+
+    c->last_error[0] = '\0';
+    if (ntok <= 0 || toks[0].type != HLM_JSON_OBJECT) return;
+    hlm_json_doc_init(&doc, c->resp, len, toks, ntok);
+
+    for (i = 0; i < sizeof(FIELDS) / sizeof(FIELDS[0]); i++) {
+        int t = hlm_json_member(&doc, 0, FIELDS[i]);
+        if (t >= 0 && doc.toks[t].type == HLM_JSON_STRING &&
+            hlm_json_string(&doc, t, c->last_error,
+                            sizeof(c->last_error)) != (size_t)-1)
+            return;
+        c->last_error[0] = '\0';
+    }
+}
+
+static int map_api_error(hlm_client *c, int status)
+{
+    capture_error_detail(c);
+
+    if (status == 401 || status == 403) return HLM_E_AUTH;
+    if (strstr(c->resp, "trial_quota") != NULL) return HLM_E_TRIAL_QUOTA;
+    if (strstr(c->resp, "embedded-format-requires-receipt") != NULL)
+        return HLM_E_PAID_FORMAT_REQUIRED;
+    if (strstr(c->resp, "sandbox_limit") != NULL ||
+        strstr(c->resp, "ALU limit") != NULL)
+        return HLM_E_PLAN_LIMIT;
+    return HLM_E_API;
 }
 
 /* ------------------------------------------------------------------ */
@@ -199,7 +236,7 @@ static int fetch_server_time(hlm_client *c, int64_t *now_out)
 
     r = send_req(c, "GET", "DateTime", NULL, NULL, &status);
     if (r != HLM_OK) return r;
-    if (status < 200 || status >= 300) return map_api_error(status);
+    if (status < 200 || status >= 300) return map_api_error(c, status);
 
     s = c->resp;
     len = strlen(s);
@@ -292,12 +329,12 @@ static int ensure_computer(hlm_client *c, char *pc_id, size_t pc_id_cap)
     r = send_req(c, "POST", "computer", body, idem, &status);
     if (r != HLM_OK) return r;
     if (!((status >= 200 && status < 300) || status == 409))
-        return map_api_error(status);
+        return map_api_error(c, status);
 
     snprintf(path, sizeof(path), "computer?macAddress=%s", c->cfg.machine_id);
     r = send_req(c, "GET", path, NULL, NULL, &status);
     if (r != HLM_OK) return r;
-    if (status < 200 || status >= 300) return map_api_error(status);
+    if (status < 200 || status >= 300) return map_api_error(c, status);
 
     {
         hlm_json_tok toks[64];
@@ -327,7 +364,7 @@ static int post_license(hlm_client *c, const char *pc_id)
     r = send_req(c, "POST", "license", body, idem, &status);
     if (r != HLM_OK) return r;
     if (!((status >= 200 && status < 300) || status == 409))
-        return map_api_error(status);
+        return map_api_error(c, status);
     return HLM_OK;
 }
 
@@ -344,7 +381,7 @@ static int get_signed_license(hlm_client *c, const char *pc_id)
 
     r = send_req(c, "GET", path, NULL, NULL, &status);
     if (r != HLM_OK) return r;
-    if (status < 200 || status >= 300) return map_api_error(status);
+    if (status < 200 || status >= 300) return map_api_error(c, status);
 
     len = strlen(c->resp);
     if (len == 0 || c->resp[0] == '<') return HLM_E_FORMAT; /* XML => bad format param */
@@ -443,7 +480,7 @@ static int patch_license(hlm_client *c, const char *code_or_null)
     }
 
     if (status != 204 && (status < 200 || status >= 300))
-        return map_api_error(status);
+        return map_api_error(c, status);
     return HLM_OK;
 }
 

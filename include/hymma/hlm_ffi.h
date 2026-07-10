@@ -78,6 +78,10 @@ HLM_API int hlm_ffi_live_mode(hlm_ffi_client *c);
 HLM_API const char *hlm_ffi_metadata(hlm_ffi_client *c, const char *key);
 HLM_API int hlm_ffi_last_http_status(hlm_ffi_client *c);
 
+/* The server's human-readable refusal detail from the last failed call on
+ * this client ("" when none) — show it to the user alongside the error code. */
+HLM_API const char *hlm_ffi_last_error_detail(hlm_ffi_client *c);
+
 /* Stateless helpers */
 HLM_API const char *hlm_ffi_err_name(int err);
 HLM_API int hlm_ffi_machine_id(char *out, int cap);   /* hardware fingerprint */

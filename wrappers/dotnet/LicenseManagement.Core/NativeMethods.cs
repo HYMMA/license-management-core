@@ -71,6 +71,9 @@ namespace LicenseManagement.Core
         internal static extern int hlm_ffi_last_http_status(IntPtr client);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr hlm_ffi_last_error_detail(IntPtr client);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr hlm_ffi_err_name(int err);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

@@ -51,14 +51,47 @@ namespace LicenseManagement.Core
         public string? LicensePath { get; set; }
     }
 
+    /// <summary>Classified reasons the core or the server can refuse an operation.</summary>
+    public enum LicenseError
+    {
+        None = 0,
+        InvalidArgument = -1,
+        BufferTooSmall = -2,
+        MalformedInput = -3,
+        SignatureInvalid = -4,
+        UnsupportedAlgorithm = -5,
+        NoLicense = -6,
+        NetworkFailure = -7,
+        ApiRejected = -8,
+        StorageFailure = -9,
+        ProductMismatch = -10,
+        ComputerMismatch = -11,
+        InvalidApiKey = -12,
+        /// <summary>The vendor's active-trial quota is exhausted — a new trial cannot start.</summary>
+        TrialQuotaExceeded = -13,
+        /// <summary>The product's policy requires a paid receipt for this license format.</summary>
+        PaidFormatRequired = -14,
+        /// <summary>The vendor's plan cap (ALU / sandbox limit) was reached.</summary>
+        PlanLimitReached = -15,
+    }
+
     public sealed class LicenseException : Exception
     {
         public int NativeError { get; }
 
-        internal LicenseException(int err)
-            : base(NativeMethods.Str(NativeMethods.hlm_ffi_err_name(err)))
+        /// <summary>The classified refusal reason.</summary>
+        public LicenseError Error => (LicenseError)NativeError;
+
+        /// <summary>The server's human-readable refusal detail, when it sent one.</summary>
+        public string Detail { get; }
+
+        internal LicenseException(int err, string? detail = null)
+            : base(string.IsNullOrEmpty(detail)
+                ? NativeMethods.Str(NativeMethods.hlm_ffi_err_name(err))
+                : $"{NativeMethods.Str(NativeMethods.hlm_ffi_err_name(err))}: {detail}")
         {
             NativeError = err;
+            Detail = detail ?? string.Empty;
         }
     }
 
@@ -157,7 +190,9 @@ namespace LicenseManagement.Core
 
         private LicenseStatus Guard(int err)
         {
-            if (err != 0) throw new LicenseException(err);
+            if (err != 0)
+                throw new LicenseException(err,
+                    NativeMethods.Str(NativeMethods.hlm_ffi_last_error_detail(Handle)));
             return Status;
         }
 
