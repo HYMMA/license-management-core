@@ -17,7 +17,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-latest
+            platform: macos-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +48,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hymmalm-${{ runner.os }}
+          name: license-management-core-${{ matrix.platform }}
           path: dist/
 
   dotnet-wrapper:
@@ -82,7 +88,9 @@ jobs:
       - name: Zip per-platform bundles
         run: |
           cd artifacts
-          for d in hymmalm-*; do (cd "$d" && zip -r "../$d.zip" .); done
+          for d in license-management-core-*; do
+            (cd "$d" && zip -r "../${d/core-/core-${GITHUB_REF_NAME}-}.zip" .)
+          done
 
       - uses: softprops/action-gh-release@v2
         with:
