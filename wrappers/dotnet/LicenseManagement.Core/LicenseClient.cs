@@ -1,6 +1,6 @@
 using System;
 
-namespace Hymma.Lm.Core
+namespace LicenseManagement.Core
 {
     /// <summary>Signed-license wire formats the server can emit.</summary>
     public enum SignedFormat

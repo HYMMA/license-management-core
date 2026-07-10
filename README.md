@@ -1,6 +1,6 @@
-# hymma-lm-core
+# license-management-core
 
-[![CI](https://github.com/HYMMA/hymma-lm-core/actions/workflows/ci.yml/badge.svg)](https://github.com/HYMMA/hymma-lm-core/actions/workflows/ci.yml)
+[![CI](https://github.com/HYMMA/license-management-core/actions/workflows/ci.yml/badge.svg)](https://github.com/HYMMA/license-management-core/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **One portable C library that is the source of truth for License-Management.com
@@ -120,7 +120,7 @@ hlm_client_activate(c, receipt_code);        /* attach a purchase           */
 
 ## .NET wrapper (the reference binding)
 
-`wrappers/dotnet/Hymma.Lm.Core` shows the wrapper pattern every language
+`wrappers/dotnet/LicenseManagement.Core` shows the wrapper pattern every language
 follows — bind the flat ABI in `include/hymma/hlm_ffi.h`, marshal strings,
 add an idiomatic facade:
 
@@ -165,7 +165,7 @@ ES256 tokens, expected statuses at fixed clock times, and tampered variants.
 The C test suite verifies every vector with the portable crypto **and** with
 Windows CNG, so the from-scratch RSA/P-256 verifiers are cross-checked against
 the OS implementation on every run. The .NET demo
-(`wrappers/dotnet/Hymma.Lm.Core.Demo`) runs the same vectors through
+(`wrappers/dotnet/LicenseManagement.Core.Demo`) runs the same vectors through
 P/Invoke. If these are green, the core verifies exactly what production signs.
 
 Regenerate vectors after a server-side signing change:

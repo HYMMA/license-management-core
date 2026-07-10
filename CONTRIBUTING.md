@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in hymma-lm-core.
+Thanks for your interest in license-management-core.
 
 ## Ground rules
 

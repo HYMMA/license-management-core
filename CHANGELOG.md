@@ -28,7 +28,7 @@ Initial release.
   replaceable for embedded targets. `HLM_BN_MAX_LIMBS` build knob for
   ES256-only MCU builds.
 - Flat FFI ABI (`hlm_ffi.h`) and the .NET reference wrapper
-  (`Hymma.Lm.Core`, netstandard2.0).
+  (`LicenseManagement.Core`, netstandard2.0).
 - Test suites: FIPS/RFC unit vectors, .NET-cross-signed JWS vectors, and a
   scripted mock-transport suite mirroring the .NET SDK's test concepts.
 
@@ -39,5 +39,5 @@ Initial release.
 - Built-in HTTP/fingerprint ports are Windows-only; POSIX ports planned.
 - P-256 verification favors reviewability over speed (~100 ms desktop).
 
-[Unreleased]: https://github.com/HYMMA/hymma-lm-core/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/HYMMA/hymma-lm-core/releases/tag/v0.1.0
+[Unreleased]: https://github.com/HYMMA/license-management-core/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/HYMMA/license-management-core/releases/tag/v0.1.0

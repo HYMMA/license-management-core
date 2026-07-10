@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <RootNamespace>Hymma.Lm.Core</RootNamespace>
-    <AssemblyName>Hymma.Lm.Core</AssemblyName>
+    <RootNamespace>LicenseManagement.Core</RootNamespace>
+    <AssemblyName>LicenseManagement.Core</AssemblyName>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>

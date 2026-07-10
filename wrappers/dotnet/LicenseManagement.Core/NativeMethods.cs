@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Hymma.Lm.Core
+namespace LicenseManagement.Core
 {
     /// <summary>Raw P/Invoke surface over hymmalm's flat FFI (hlm_ffi.h).</summary>
     internal static class NativeMethods

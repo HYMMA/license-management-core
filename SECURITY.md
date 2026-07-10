@@ -1,6 +1,6 @@
 # Security Policy
 
-hymma-lm-core is a **verification-only** cryptographic library: it holds no
+license-management-core is a **verification-only** cryptographic library: it holds no
 private keys and never signs anything. Still, a verification bypass would be a
 serious vulnerability for every application that relies on it.
 

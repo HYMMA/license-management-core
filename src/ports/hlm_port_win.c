@@ -68,7 +68,7 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     uc.dwUrlPathLength = 768;
     if (!WinHttpCrackUrl(wurl, 0, 0, &uc)) return HLM_E_ARG;
 
-    session = WinHttpOpen(L"hymma-lm-core/1.0",
+    session = WinHttpOpen(L"license-management-core/1.0",
                           WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                           WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == NULL) goto done;

@@ -1,4 +1,4 @@
-/* hymma-lm-core — portable license-management client core.
+/* license-management-core — portable license-management client core.
  *
  * One C library that is the source of truth for verifying and managing
  * Hymma License-Management licenses on every platform: Windows/macOS/Linux

@@ -64,7 +64,7 @@ jobs:
         run: |
           # the demo P/Invokes hymmalm.dll and verifies every signed vector
           if [ -f build/Release/hymmalm.dll ]; then cp build/Release/hymmalm.dll build/; fi
-          cd wrappers/dotnet/Hymma.Lm.Core.Demo
+          cd wrappers/dotnet/LicenseManagement.Core.Demo
           dotnet run -c Release -- ../../../tests/vectors/vectors.json
 
   release:

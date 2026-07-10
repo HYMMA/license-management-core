@@ -2,7 +2,7 @@
 // Proves the whole P/Invoke chain: C# -> hymmalm.dll -> portable crypto.
 // (No network calls — online flows are exercised against the sandbox server.)
 using System.Text.Json;
-using Hymma.Lm.Core;
+using LicenseManagement.Core;
 
 if (args.Length != 1)
 {
