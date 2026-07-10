@@ -149,6 +149,8 @@ HLM_API hlm_ffi_client *hlm_ffi_create(const char *base_url,
     cfg.clock = hlm_clock_system();
 #if defined(_WIN32)
     cfg.http = hlm_http_winhttp();
+    cfg.sleep = hlm_sleep_win();
+    cfg.timesync = hlm_timesync_win(); /* clock-tamper cascade, like the SDK */
 #endif
     if (c->license_path[0] != '\0') {
         c->storage_cfg.path = c->license_path;

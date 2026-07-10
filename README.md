@@ -188,6 +188,27 @@ Headers: `X-API-KEY` (`PUB_` client key), `X-Correlation-Id`,
 Expired(file)` — file expiry always wins, then the signed server status,
 then the legacy trial/receipt fallback (same precedence as the .NET SDK).
 
+## Behavior parity with the .NET SDK
+
+Beyond the wire contract, the client reproduces the SDK's operational
+behavior, each pinned by a mock-transport flow test (`tests/hlm_flow_tests.c`)
+that mirrors the concepts of `LicenseManagement.EndUser.Test`:
+
+- **Retry policy** (`ApiHttp`): 3 attempts; transient = 429/408/5xx except
+  501/505; `Retry-After` honored; 200 ms exponential backoff capped at 5 s,
+  10 s total wait ceiling; 401/403 terminal, never retried.
+- **Clock-tamper resistance** (`TimeSyncDiagnostic`): every public call
+  resolves ONE trusted evaluation time. Windows port: local clock only if
+  w32time is running, NTP-configured, and within 1 h of time.windows.com,
+  else SNTP pool.ntp.org — the client then falls back to `GET DateTime`,
+  then the local clock. Winding the clock back does not resurrect a lapsed
+  trial.
+- **Flow semantics**: 201/409 both succeed on POSTs; PATCH 404 recreates the
+  license and retries; tampered or expired caches silently refetch; offline
+  with a verified-but-expired cache surfaces `Expired` instead of failing;
+  uninstall always uses the live hardware id, never the cached file's; the
+  refreshed file lands in `ReceiptUnregistered` state after deactivation.
+
 ## Scope & roadmap
 
 - [ ] Portable Ed25519 verify (`HLM_ALG_EDDSA` currently needs a custom
@@ -196,7 +217,7 @@ then the legacy trial/receipt fallback (same precedence as the .NET SDK).
 - [ ] P-256 fast reduction (verification is ~100 ms portable; correctness
       first, speed later — licenses verify once per launch)
 - [ ] Offline request/response activation files (air-gapped desktops)
-- [ ] Clock-tamper heuristics port (NTP cross-check like the .NET SDK)
+- [x] Clock-tamper trusted-time cascade (w32time / SNTP / GET DateTime) — done
 - [ ] CI: build matrix (MSVC/gcc/clang × x64/arm64) + artifact publishing
 
 **Non-goals:** XML-DSig verification (that is what `format=jws` exists to

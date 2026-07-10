@@ -77,6 +77,12 @@ if(HLM_BUILD_TESTS)
     target_include_directories(hlm_tests PRIVATE src/core src/crypto include)
     add_test(NAME hlm_tests
              COMMAND hlm_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/vectors.json)
+
+    add_executable(hlm_flow_tests tests/hlm_flow_tests.c)
+    target_link_libraries(hlm_flow_tests PRIVATE hymmalm_static)
+    target_include_directories(hlm_flow_tests PRIVATE src/core src/crypto include)
+    add_test(NAME hlm_flow_tests
+             COMMAND hlm_flow_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/vectors.json)
 endif()
 
 if(HLM_WITH_WIN_PORTS)

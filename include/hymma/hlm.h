@@ -261,6 +261,7 @@ typedef struct {
     char *body;                /* caller-provided buffer */
     size_t body_cap;
     size_t body_len;           /* filled by transport */
+    int retry_after_seconds;   /* parsed Retry-After header; -1 if absent */
 } hlm_http_response;
 
 /* Return HLM_OK when a response (any status) was received. */
@@ -294,6 +295,31 @@ typedef struct {
 
 hlm_clock hlm_clock_system(void); /* time(NULL) */
 
+/* Backoff sleep between HTTP retries. Optional: without it, retries are
+ * immediate (still bounded by the attempt count). */
+typedef struct {
+    void (*sleep_ms)(void *user, unsigned ms);
+    void *user;
+} hlm_sleep;
+
+#if defined(_WIN32)
+hlm_sleep hlm_sleep_win(void); /* Sleep() */
+#endif
+
+/* Trusted-time source for clock-tamper resistance (the .NET SDK's
+ * TimeSyncDiagnostic concept). Return HLM_OK and a trusted unix time, or an
+ * error to make the client fall back to GET DateTime, then the local clock. */
+typedef struct {
+    int (*now)(void *user, int64_t *now_utc);
+    void *user;
+} hlm_timesync;
+
+#if defined(_WIN32)
+/* Windows cascade: local clock IF the w32time service is running, configured
+ * for NTP, and within 1h of time.windows.com; otherwise SNTP pool.ntp.org. */
+hlm_timesync hlm_timesync_win(void);
+#endif
+
 /* ------------------------------------------------------------------ */
 /* High-level client (online flow — desktops/servers/connected IoT)    */
 /* ------------------------------------------------------------------ */
@@ -320,6 +346,8 @@ typedef struct {
     hlm_http http;             /* send==NULL => offline-only */
     hlm_storage storage;       /* read==NULL => no cache */
     hlm_clock clock;
+    hlm_sleep sleep;           /* optional: retry backoff waits */
+    hlm_timesync timesync;     /* optional: clock-tamper resistance */
 } hlm_client_cfg;
 
 typedef struct {
@@ -328,6 +356,7 @@ typedef struct {
     hlm_status status;
     int has_license;
     int last_http_status;
+    int64_t eval_now;          /* trusted evaluation time of the last call */
     char buf[HLM_CLIENT_BUF];
     char resp[HLM_CLIENT_BUF];
 } hlm_client;

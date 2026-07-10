@@ -1,22 +1,36 @@
-/* Windows ports: WinHTTP transport + machine identity.
+/* Windows ports: WinHTTP transport, machine identity, sleep, trusted time.
  *
  * Machine identity reproduces the .NET SDK's DeviceId pipeline without WMI:
  *   Win32_BaseBoard.SerialNumber   -> SMBIOS type 2 serial (GetSystemFirmwareTable)
  *   Win32_Processor.ProcessorId    -> CPUID leaf 1, "%08X%08X" of EDX,EAX
  * so the same physical machine registers as the SAME computer whether the
  * vendor ships the .NET SDK or this core.
+ *
+ * Trusted time reproduces the SDK's TimeSyncDiagnostic cascade:
+ *   local clock IF w32time is running, configured for NTP, and within 1h of
+ *   time.windows.com; otherwise SNTP to pool.ntp.org; otherwise fail (the
+ *   client then falls back to GET DateTime, then the local clock).
  */
 #if defined(_WIN32)
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <winhttp.h>
 #include <intrin.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "hymma/hlm.h"
 
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "advapi32.lib")
+
+#define HLM_HTTP_TIMEOUT_MS 15000 /* per request, matches the .NET SDK */
+#define HLM_NTP_TIMEOUT_MS 3000
+#define HLM_MAX_DRIFT_SECONDS 3600 /* 1.0 hour, matches TimeSyncConstants */
 
 /* ------------------------------------------------------------------ */
 /* WinHTTP transport                                                   */
@@ -40,6 +54,7 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     size_t total = 0;
 
     (void)user;
+    resp->retry_after_seconds = -1;
 
     if (utf8_to_wide(req->url, wurl, 1024) < 0 ||
         utf8_to_wide(req->method, wmethod, 16) < 0)
@@ -57,6 +72,9 @@ static int winhttp_send(void *user, const hlm_http_request *req,
                           WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                           WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == NULL) goto done;
+
+    WinHttpSetTimeouts(session, HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS,
+                       HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS);
 
     connect = WinHttpConnect(session, whost, uc.nPort, 0);
     if (connect == NULL) goto done;
@@ -104,6 +122,18 @@ static int winhttp_send(void *user, const hlm_http_request *req,
                              WINHTTP_NO_HEADER_INDEX))
         goto done;
 
+    /* Retry-After (delta-seconds form; date form is ignored) */
+    {
+        wchar_t ra[64];
+        DWORD ra_len = sizeof(ra);
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_RETRY_AFTER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, ra, &ra_len,
+                                WINHTTP_NO_HEADER_INDEX)) {
+            long v = wcstol(ra, NULL, 10);
+            if (v >= 0 && v < 24 * 3600) resp->retry_after_seconds = (int)v;
+        }
+    }
+
     for (;;) {
         DWORD avail = 0, got = 0;
         if (!WinHttpQueryDataAvailable(request, &avail)) goto done;
@@ -133,6 +163,159 @@ hlm_http hlm_http_winhttp(void)
     h.send = winhttp_send;
     h.user = 0;
     return h;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sleep                                                               */
+/* ------------------------------------------------------------------ */
+
+static void sleep_win(void *user, unsigned ms)
+{
+    (void)user;
+    Sleep(ms);
+}
+
+hlm_sleep hlm_sleep_win(void)
+{
+    hlm_sleep s;
+    s.sleep_ms = sleep_win;
+    s.user = 0;
+    return s;
+}
+
+/* ------------------------------------------------------------------ */
+/* Trusted time (clock-tamper resistance)                              */
+/* ------------------------------------------------------------------ */
+
+/* Minimal SNTP client (RFC 4330): 48-byte packet, LI=0 VN=3 Mode=3,
+ * transmit timestamp at bytes 40-47, epoch 1900-01-01. */
+static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
+{
+    WSADATA wsa;
+    struct addrinfo hints, *ai = NULL;
+    SOCKET sock = INVALID_SOCKET;
+    uint8_t pkt[48];
+    int result = -1;
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return -1;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
+    if (getaddrinfo(host, "123", &hints, &ai) != 0 || ai == NULL) goto done;
+
+    sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (sock == INVALID_SOCKET) goto done;
+
+    {
+        DWORD tmo = (DWORD)timeout_ms;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tmo, sizeof(tmo));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tmo, sizeof(tmo));
+    }
+
+    memset(pkt, 0, sizeof(pkt));
+    pkt[0] = 0x1B; /* LI=0, VN=3, Mode=3 (client) — same as NtpConnection */
+
+    if (sendto(sock, (const char *)pkt, sizeof(pkt), 0, ai->ai_addr,
+               (int)ai->ai_addrlen) != sizeof(pkt))
+        goto done;
+    if (recv(sock, (char *)pkt, sizeof(pkt), 0) != sizeof(pkt)) goto done;
+
+    {
+        /* seconds since 1900-01-01 from bytes 40-43 (big-endian) */
+        uint32_t secs = ((uint32_t)pkt[40] << 24) | ((uint32_t)pkt[41] << 16) |
+                        ((uint32_t)pkt[42] << 8) | (uint32_t)pkt[43];
+        if (secs == 0) goto done;
+        /* 2208988800 = seconds between 1900-01-01 and 1970-01-01 */
+        *epoch_out = (int64_t)secs - 2208988800LL;
+        result = 0;
+    }
+
+done:
+    if (sock != INVALID_SOCKET) closesocket(sock);
+    if (ai != NULL) freeaddrinfo(ai);
+    WSACleanup();
+    return result;
+}
+
+static int w32time_running(void)
+{
+    SC_HANDLE scm, svc;
+    SERVICE_STATUS ss;
+    int running = 0;
+
+    scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
+    if (scm == NULL) return 0;
+    svc = OpenServiceA(scm, "w32time", SERVICE_QUERY_STATUS);
+    if (svc != NULL) {
+        if (QueryServiceStatus(svc, &ss))
+            running = ss.dwCurrentState == SERVICE_RUNNING;
+        CloseServiceHandle(svc);
+    }
+    CloseServiceHandle(scm);
+    return running;
+}
+
+static int w32time_uses_ntp(void)
+{
+    char type[32];
+    DWORD len = sizeof(type);
+    if (RegGetValueA(HKEY_LOCAL_MACHINE,
+                     "SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters",
+                     "Type", RRF_RT_REG_SZ, NULL, type, &len) != ERROR_SUCCESS)
+        return 0;
+    return _stricmp(type, "NTP") == 0;
+}
+
+static int64_t local_utc_now(void)
+{
+    FILETIME ft;
+    ULARGE_INTEGER u;
+    GetSystemTimeAsFileTime(&ft);
+    u.LowPart = ft.dwLowDateTime;
+    u.HighPart = ft.dwHighDateTime;
+    /* FILETIME epoch 1601-01-01, 100ns ticks */
+    return (int64_t)(u.QuadPart / 10000000ULL) - 11644473600LL;
+}
+
+static int timesync_win_now(void *user, int64_t *now_utc)
+{
+    int64_t ntp_time;
+
+    (void)user;
+
+    /* Trust the local clock only when Windows itself keeps it honest AND it
+     * actually agrees with an authoritative source — same three checks as
+     * the SDK's TimeSyncDiagnostic. */
+    if (w32time_running() && w32time_uses_ntp() &&
+        sntp_query("time.windows.com", HLM_NTP_TIMEOUT_MS, &ntp_time) == 0) {
+        int64_t local = local_utc_now();
+        int64_t drift = local - ntp_time;
+        if (drift < 0) drift = -drift;
+        if (drift < HLM_MAX_DRIFT_SECONDS) {
+            *now_utc = local;
+            return HLM_OK;
+        }
+        /* drifted: the NTP answer itself is trustworthy */
+        *now_utc = ntp_time;
+        return HLM_OK;
+    }
+
+    if (sntp_query("pool.ntp.org", HLM_NTP_TIMEOUT_MS, &ntp_time) == 0) {
+        *now_utc = ntp_time;
+        return HLM_OK;
+    }
+
+    return HLM_E_HTTP; /* caller falls back to GET DateTime, then local */
+}
+
+hlm_timesync hlm_timesync_win(void)
+{
+    hlm_timesync t;
+    t.now = timesync_win_now;
+    t.user = 0;
+    return t;
 }
 
 /* ------------------------------------------------------------------ */

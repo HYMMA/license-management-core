@@ -162,6 +162,22 @@ AddCase("rs256-legacy-trial", rsLegacy, true, "2026-07-10T00:00:00Z",
 AddCase("rs256-legacy-trial-over", rsLegacy, true, "2026-08-15T00:00:00Z",
         "InvalidTrial", null);
 
+object UnregisteredLicense() => new
+{
+    Updated = "2026-06-01T10:30:00",
+    Id = "LIC_01KWVTRYMCAGWHTCVBYFGNJDA0",
+    Status = "ReceiptUnregistered",
+    LiveMode = true,
+    TrialEndDate = "2026-05-25T08:00:00",
+    Expires = "2026-12-01T00:00:00Z",
+    Product = Product(),
+    Computer = Computer(),
+};
+
+var rsUnregistered = SignRs256(UnregisteredLicense());
+AddCase("rs256-receipt-unregistered", rsUnregistered, true, "2026-07-10T00:00:00Z",
+        "ReceiptUnregistered", null);
+
 // Tampering: bump a character inside the payload segment.
 static string TamperPayload(string jws)
 {
