@@ -1,0 +1,7 @@
+build/
+out/
+artifacts/
+*.user
+.vs/
+bin/
+obj/

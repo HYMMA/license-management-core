@@ -1,0 +1,6 @@
+* text=lf
+*.png binary
+*.ico binary
+*.dll binary
+*.lib binary
+*.exe binary

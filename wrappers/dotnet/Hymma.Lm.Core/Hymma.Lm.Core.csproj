@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Hymma.Lm.Core</RootNamespace>
+    <AssemblyName>Hymma.Lm.Core</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <Description>Thin .NET binding over the hymmalm native license-management core. The native library is the source of truth; this assembly only marshals.</Description>
+  </PropertyGroup>
+
+  <!-- Ship the native DLL next to the assembly when it has been built.
+       CI should place per-RID binaries under runtimes/<rid>/native instead. -->
+  <ItemGroup Condition="Exists('..\..\..\build\hymmalm.dll')">
+    <None Include="..\..\..\build\hymmalm.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>hymmalm.dll</Link>
+    </None>
+  </ItemGroup>
+
+</Project>
