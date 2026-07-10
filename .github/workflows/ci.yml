@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir -p dist/include
+          cp -r include/hymma dist/include/
+          cp LICENSE README.md dist/
+          find build -maxdepth 2 \( -name 'hymmalm.dll' -o -name 'libhymmalm.so' \
+            -o -name 'libhymmalm.dylib' -o -name 'libhymmalm.a' -o -name 'hymmalm.lib' \) \
+            -exec cp {} dist/ \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hymmalm-${{ runner.os }}
+          path: dist/
+
+  dotnet-wrapper:
+    name: .NET wrapper (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build native library
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+
+      - name: Run wrapper demo over the test vectors
+        shell: bash
+        run: |
+          # the demo P/Invokes hymmalm.dll and verifies every signed vector
+          if [ -f build/Release/hymmalm.dll ]; then cp build/Release/hymmalm.dll build/; fi
+          cd wrappers/dotnet/Hymma.Lm.Core.Demo
+          dotnet run -c Release -- ../../../tests/vectors/vectors.json
+
+  release:
+    name: publish release binaries
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, dotnet-wrapper]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Zip per-platform bundles
+        run: |
+          cd artifacts
+          for d in hymmalm-*; do (cd "$d" && zip -r "../$d.zip" .); done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true

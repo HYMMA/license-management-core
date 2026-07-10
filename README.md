@@ -1,5 +1,8 @@
 # hymma-lm-core
 
+[![CI](https://github.com/HYMMA/hymma-lm-core/actions/workflows/ci.yml/badge.svg)](https://github.com/HYMMA/hymma-lm-core/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 **One portable C library that is the source of truth for License-Management.com
 client behavior on every platform — desktops, servers, and IoT devices —
 with thin language wrappers on top.**
