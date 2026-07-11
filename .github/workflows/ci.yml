@@ -89,7 +89,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build native library
-        if: matrix.wrapper != 'rust'   # the Rust crate compiles the core itself
+        # the Rust crate and Go module vendor + compile the core themselves
+        if: matrix.wrapper != 'rust' && matrix.wrapper != 'go'
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --config Release
@@ -118,8 +119,10 @@ jobs:
         if: matrix.wrapper == 'go'
         working-directory: wrappers/go
         run: |
+          ./sync-csrc.sh
+          git diff --exit-code .   # vendored C copies must match ../../src
           go vet ./...
-          LD_LIBRARY_PATH=$PWD/../../build go test ./... -v
+          go test ./... -v
 
       - uses: actions/setup-java@v4
         if: matrix.wrapper == 'java'

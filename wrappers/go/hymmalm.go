@@ -28,8 +28,13 @@
 package hymmalm
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../include
-#cgo LDFLAGS: -L${SRCDIR}/../../build -lhymmalm -Wl,-rpath,${SRCDIR}/../../build
+// The C core is vendored into this directory (see sync-csrc.sh) and
+// compiled by cgo, so `go get` works with nothing but a C toolchain —
+// no prebuilt library, no include paths outside the module.
+
+#cgo CFLAGS: -I${SRCDIR}/include
+#cgo linux LDFLAGS: -ldl
+#cgo windows LDFLAGS: -lwinhttp -lbcrypt -lws2_32 -ladvapi32
 #include <stdlib.h>
 #include "hymma/hlm_ffi.h"
 */

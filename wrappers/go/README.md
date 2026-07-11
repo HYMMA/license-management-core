@@ -1,10 +1,20 @@
 # hymmalm — Go wrapper for license-management-core
 
-A thin cgo binding over the native `hymmalm` shared library
+A thin cgo binding over the native core's flat ABI
 (`include/hymma/hlm_ffi.h`). All licensing logic — JWS verification, status
 rules, machine fingerprinting, the REST client flow, retry policy and
 clock-tamper resistance — lives in the native core, so every language wrapper
 behaves identically. This package only marshals.
+
+The C core is **vendored into the module** (flat `hlm_*.c` copies kept in
+sync by `sync-csrc.sh`; CI fails on drift) and compiled by cgo, so the
+module is fully self-contained:
+
+```sh
+go get github.com/HYMMA/license-management-core/wrappers/go@latest
+```
+
+needs nothing but a C toolchain — no prebuilt library, no CMake step.
 
 ## Usage
 
@@ -41,29 +51,23 @@ expectedMachineID, now)` (pass the zero `time.Time` for the system clock).
 One `*Client` per goroutine, or serialize calls yourself — same rule as the
 native handle it wraps.
 
-## Building and linking
+## Building
 
-CGO is required. The `#cgo` directives in `hymmalm.go` point at the in-repo
-header and build tree:
+CGO is required (`CGO_ENABLED=1` plus gcc/clang; on Windows, mingw-w64 —
+the vendored Windows ports link `winhttp`/`bcrypt`/`ws2_32`/`advapi32`
+automatically). There is nothing else to install: cgo compiles the vendored
+`hlm_*.c` sources statically into your binary. On Linux/macOS the HTTP port
+dlopen()s the system libcurl at run time.
 
-- headers: `-I${SRCDIR}/../../include`
-- library: `-L${SRCDIR}/../../build -lhymmalm -Wl,-rpath,${SRCDIR}/../../build`
+After changing the canonical C core (`../../src`, `../../include`), re-run
+`./sync-csrc.sh` and commit the refreshed copies — never edit the copies
+directly.
 
-so an in-repo `go build`/`go test` works as soon as the native library has
-been built (`cmake` → `build/libhymmalm.so`).
+## Releasing
 
-**Installed deployments** should override the link flags to point at the
-installed library instead, e.g.:
-
-```sh
-CGO_CFLAGS="-I/usr/local/include" \
-CGO_LDFLAGS="-L/usr/local/lib -lhymmalm" \
-go build ./...
-```
-
-At run time the dynamic loader must find `libhymmalm.so` (`.dylib` on macOS,
-`hymmalm.dll` on Windows) — via the rpath baked in above, `LD_LIBRARY_PATH`,
-or a standard library directory.
+Go has no registry; a release is a git tag on this public repo using the
+submodule-prefixed form, e.g. `wrappers/go/v0.1.1`. proxy.golang.org picks
+it up on first request.
 
 ## Tests
 
@@ -71,9 +75,6 @@ or a standard library directory.
 cd wrappers/go
 go vet ./... && go test ./... -v
 ```
-
-If the rpath does not cover the location `go test` runs the binary from,
-prepend `LD_LIBRARY_PATH=$PWD/../../build`.
 
 The tests mirror the Python wrapper's suite: vector-driven verification over
 `tests/vectors/*.json`, product/machine binding, machine identity, and the

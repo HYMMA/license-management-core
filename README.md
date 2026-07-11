@@ -148,7 +148,7 @@ languages under `wrappers/`:
 | `wrappers/dotnet` | P/Invoke | the reference binding; NuGet `LicenseManagement.Core` |
 | `wrappers/python` | `ctypes` | stdlib only, `pip`-packageable (`hymmalm`) |
 | `wrappers/node` | `koffi` | CommonJS + TypeScript declarations |
-| `wrappers/go` | `cgo` | idiomatic `(Status, error)` API |
+| `wrappers/go` | `cgo` | vendors + compiles the core — plain `go get`, no prebuilt library |
 | `wrappers/java` | FFM (`java.lang.foreign`) | JDK 21 (preview) / 22+ (final), zero deps |
 | `wrappers/php` | `FFI` | PHP ≥ 8.1 |
 | `wrappers/rust` | `unsafe extern` + `cc` | compiles the core in `build.rs` — self-contained crate, drop into **Tauri** apps |
