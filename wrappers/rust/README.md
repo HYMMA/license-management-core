@@ -37,20 +37,29 @@ reason when it sent one.
 
 ## Native core — self-contained build
 
-Unlike the Python/.NET wrappers, this crate **vendors the C core**:
-`build.rs` compiles the sources under `../../src` with the [`cc`] crate and
-links them statically. There is no shared library to build, ship, or locate —
-a plain `cargo build` produces a self-contained binary. You only need a C
-compiler (cc/clang on Unix, MSVC on Windows; the Windows build links
-`winhttp`/`bcrypt`/`ws2_32`/`advapi32` automatically).
+Unlike the Python/.NET wrappers, this crate **vendors the C core**: the
+sources are copied under `csrc/` (maintained by `sync-csrc.sh`; CI fails if
+they drift from the canonical `../../src`) and `build.rs` compiles them with
+the [`cc`] crate, linking statically. There is no shared library to build,
+ship, or locate — a plain `cargo build` produces a self-contained binary,
+and the published crates.io tarball carries everything it needs. You only
+need a C compiler (cc/clang on Unix, MSVC on Windows; the Windows build
+links `winhttp`/`bcrypt`/`ws2_32`/`advapi32` automatically).
 
 On Linux/macOS the HTTP transport `dlopen()`s the system libcurl at runtime
 (any distro flavor works); no curl development package is needed at build
 time.
 
-Note: the source paths assume this crate lives inside the
-license-management-core repository checkout (`wrappers/rust`). Publishing to
-crates.io would package the C sources into the crate via `include`.
+After changing the canonical C core, re-run `./sync-csrc.sh` and commit the
+refreshed copies — never edit `csrc/` directly.
+
+## Publishing
+
+CI publishes to crates.io automatically on `v*` release tags (the `crates`
+job, authenticated by the `CARGO_REGISTRY_TOKEN` secret). `cargo package`
+runs on every CI build to prove the standalone tarball compiles. The
+integration tests are not packaged (they replay `../../tests/vectors` from
+the repo checkout).
 
 ## Threading
 

@@ -1,6 +1,7 @@
 //! Compiles the vendored C core (license-management-core) and links it
-//! statically. Paths are relative to the crate at `../..` — the repository
-//! root of license-management-core.
+//! statically. The sources live under `csrc/` inside the crate (copied from
+//! the repository's `src/` + `include/` by sync-csrc.sh) so the published
+//! crates.io tarball is self-contained.
 
 use std::env;
 use std::path::PathBuf;
@@ -25,7 +26,7 @@ const COMMON_SOURCES: &[&str] = &[
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let root = manifest_dir.join("../..");
+    let root = manifest_dir.join("csrc");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
 
     let mut build = cc::Build::new();

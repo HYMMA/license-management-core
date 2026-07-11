@@ -30,6 +30,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 - CI: build matrix extended to gcc/clang/MSVC across linux-x64, linux-arm64,
   windows-x64, macos-x64 and macos-arm64, with per-wrapper test jobs; NuGet
   package now bundles linux-arm64 and osx-x64 native runtimes too.
+- Publishing: the Go module and Rust crate are self-contained (C core
+  vendored via `sync-csrc.sh`, drift-checked in CI). Go releases via
+  `wrappers/go/vX.Y.Z` tags (no registry); the `hymmalm` crate publishes to
+  crates.io automatically on `v*` tags (`CARGO_REGISTRY_TOKEN`).
 
 ## [0.1.1] - 2026-07-10
 
