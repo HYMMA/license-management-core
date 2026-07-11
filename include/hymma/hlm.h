@@ -90,8 +90,7 @@ typedef struct {
     void *user;
 } hlm_crypto;
 
-/* Built-in pure-C backend (RS256 + ES256; EdDSA returns
- * HLM_E_UNSUPPORTED_ALG until the Ed25519 verifier lands). */
+/* Built-in pure-C backend (RS256 + ES256 + EdDSA/Ed25519). */
 hlm_crypto hlm_crypto_portable(void);
 
 #if defined(_WIN32)
@@ -244,6 +243,12 @@ int hlm_fingerprint(const char *const *components, size_t count,
 int hlm_machine_id_win(char *out, size_t out_len);
 /* Computer name as the SDK sends it (Environment.MachineName equivalent). */
 int hlm_machine_name_win(char *out, size_t out_len);
+#else
+/* POSIX: the stable OS machine id (/etc/machine-id on Linux, gethostuuid()
+ * on macOS) through hlm_fingerprint() — the id itself never leaves the box. */
+int hlm_machine_id_posix(char *out, size_t out_len);
+/* gethostname() */
+int hlm_machine_name_posix(char *out, size_t out_len);
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -275,6 +280,11 @@ typedef struct {
 
 #if defined(_WIN32)
 hlm_http hlm_http_winhttp(void); /* built-in WinHTTP transport */
+#else
+/* libcurl transport; libcurl is dlopen()ed at first use so the library
+ * itself has no link-time dependency. Fails with HLM_E_HTTP if no libcurl
+ * is present on the system. */
+hlm_http hlm_http_curl(void);
 #endif
 
 /* Blob storage for the cached license (a file on desktops, flash on MCUs). */
@@ -307,6 +317,8 @@ typedef struct {
 
 #if defined(_WIN32)
 hlm_sleep hlm_sleep_win(void); /* Sleep() */
+#else
+hlm_sleep hlm_sleep_posix(void); /* nanosleep() */
 #endif
 
 /* Trusted-time source for clock-tamper resistance (the .NET SDK's
@@ -321,6 +333,11 @@ typedef struct {
 /* Windows cascade: local clock IF the w32time service is running, configured
  * for NTP, and within 1h of time.windows.com; otherwise SNTP pool.ntp.org. */
 hlm_timesync hlm_timesync_win(void);
+#else
+/* POSIX cascade: SNTP to pool.ntp.org (HLM_NTP_HOST overrides the host,
+ * HLM_TIMESYNC=off disables); local clock wins when within 1h of the NTP
+ * answer, otherwise the NTP answer itself. */
+hlm_timesync hlm_timesync_posix(void);
 #endif
 
 /* ------------------------------------------------------------------ */

@@ -11,6 +11,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(HLM_CORE_SOURCES
     src/core/hlm_sha256.c
+    src/core/hlm_sha512.c
     src/core/hlm_b64url.c
     src/core/hlm_json.c
     src/core/hlm_bignum.c
@@ -20,6 +21,7 @@ set(HLM_CORE_SOURCES
     src/core/hlm_ffi.c
     src/crypto/hlm_rsa.c
     src/crypto/hlm_p256.c
+    src/crypto/hlm_ed25519.c
     src/crypto/hlm_crypto_portable.c
     src/ports/hlm_ports_common.c
 )
@@ -29,6 +31,12 @@ if(HLM_WITH_WIN_PORTS)
         src/crypto/hlm_crypto_cng.c
         src/ports/hlm_port_win.c
     )
+endif()
+
+if(NOT WIN32)
+    # POSIX ports: libcurl transport (dlopen'd — no link dependency),
+    # /etc/machine-id fingerprint, nanosleep, SNTP trusted time.
+    list(APPEND HLM_CORE_SOURCES src/ports/hlm_port_posix.c)
 endif()
 
 # Static library — the embedded / vendoring target.
@@ -54,6 +62,11 @@ endif()
 
 if(WIN32)
     target_link_libraries(hymmalm_static PUBLIC winhttp bcrypt)
+else()
+    target_link_libraries(hymmalm_static PUBLIC ${CMAKE_DL_LIBS})
+    if(TARGET hymmalm)
+        target_link_libraries(hymmalm PRIVATE ${CMAKE_DL_LIBS})
+    endif()
 endif()
 
 if(MSVC)
@@ -76,7 +89,8 @@ if(HLM_BUILD_TESTS)
     target_link_libraries(hlm_tests PRIVATE hymmalm_static)
     target_include_directories(hlm_tests PRIVATE src/core src/crypto include)
     add_test(NAME hlm_tests
-             COMMAND hlm_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/vectors.json)
+             COMMAND hlm_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/vectors.json
+                               ${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/vectors-eddsa.json)
 
     add_executable(hlm_flow_tests tests/hlm_flow_tests.c)
     target_link_libraries(hlm_flow_tests PRIVATE hymmalm_static)

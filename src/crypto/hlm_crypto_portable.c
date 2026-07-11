@@ -1,9 +1,8 @@
-/* Built-in dependency-free crypto backend: RS256 + ES256.
- * EdDSA (Ed25519) is on the roadmap; until then it reports unsupported so
- * callers can fall back to another key or backend. */
+/* Built-in dependency-free crypto backend: RS256 + ES256 + EdDSA. */
 #include "hymma/hlm.h"
 #include "hlm_rsa.h"
 #include "hlm_p256.h"
+#include "hlm_ed25519.h"
 
 static int portable_verify(void *user, const hlm_public_key *key,
                            const uint8_t *msg, size_t msg_len,
@@ -21,7 +20,8 @@ static int portable_verify(void *user, const hlm_public_key *key,
         return hlm_p256_ecdsa_sha256_verify(key->u.ec.x, key->u.ec.y,
                                             msg, msg_len, sig);
     case HLM_ALG_EDDSA:
-        return HLM_E_UNSUPPORTED_ALG;
+        if (sig_len != 64) return 0;
+        return hlm_ed25519_verify(key->u.ed25519.pub, msg, msg_len, sig);
     default:
         return HLM_E_UNSUPPORTED_ALG;
     }

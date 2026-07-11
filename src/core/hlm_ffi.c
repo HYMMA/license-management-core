@@ -117,7 +117,8 @@ HLM_API hlm_ffi_client *hlm_ffi_create(const char *base_url,
         if (hlm_machine_id_win(c->machine_id, sizeof(c->machine_id)) != HLM_OK)
             goto fail;
 #else
-        goto fail; /* non-Windows callers must supply the fingerprint */
+        if (hlm_machine_id_posix(c->machine_id, sizeof(c->machine_id)) != HLM_OK)
+            goto fail;
 #endif
     }
 
@@ -129,7 +130,8 @@ HLM_API hlm_ffi_client *hlm_ffi_create(const char *base_url,
         if (hlm_machine_name_win(c->machine_name, sizeof(c->machine_name)) != HLM_OK)
             goto fail;
 #else
-        goto fail;
+        if (hlm_machine_name_posix(c->machine_name, sizeof(c->machine_name)) != HLM_OK)
+            goto fail;
 #endif
     }
 
@@ -151,6 +153,10 @@ HLM_API hlm_ffi_client *hlm_ffi_create(const char *base_url,
     cfg.http = hlm_http_winhttp();
     cfg.sleep = hlm_sleep_win();
     cfg.timesync = hlm_timesync_win(); /* clock-tamper cascade, like the SDK */
+#else
+    cfg.http = hlm_http_curl();
+    cfg.sleep = hlm_sleep_posix();
+    cfg.timesync = hlm_timesync_posix();
 #endif
     if (c->license_path[0] != '\0') {
         c->storage_cfg.path = c->license_path;
@@ -286,9 +292,7 @@ HLM_API int hlm_ffi_machine_id(char *out, int cap)
 #if defined(_WIN32)
     return hlm_machine_id_win(out, (size_t)cap);
 #else
-    (void)out;
-    (void)cap;
-    return HLM_E_UNSUPPORTED_ALG;
+    return hlm_machine_id_posix(out, (size_t)cap);
 #endif
 }
 
@@ -297,9 +301,7 @@ HLM_API int hlm_ffi_machine_name(char *out, int cap)
 #if defined(_WIN32)
     return hlm_machine_name_win(out, (size_t)cap);
 #else
-    (void)out;
-    (void)cap;
-    return HLM_E_UNSUPPORTED_ALG;
+    return hlm_machine_name_posix(out, (size_t)cap);
 #endif
 }
 
