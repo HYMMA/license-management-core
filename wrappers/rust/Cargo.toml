@@ -1,0 +1,27 @@
+# hymmalm — Rust wrapper for license-management-core.
+#
+# The crate vendors the C core: build.rs compiles the sources at ../../src
+# (relative to this Cargo.toml) with the `cc` crate and links them statically,
+# so `cargo add hymmalm` needs no separately built native library — exactly
+# what a Tauri app wants.
+#
+# NOTE: the C source paths in build.rs assume this crate lives inside the
+# license-management-core repository checkout (wrappers/rust). For crates.io
+# publishing the C sources would be packaged into the crate via the
+# `include`/`exclude` fields (copied under the crate root); that is not done
+# here.
+
+[package]
+name = "hymmalm"
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+description = "Licensing client for license-management.com: JWS-signed license verification, trial bootstrap, activation and offline cache. Statically vendors the C core (Tauri-ready)."
+keywords = ["license", "licensing", "jws", "drm", "tauri"]
+categories = ["api-bindings", "authentication"]
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+serde_json = "1"
