@@ -5,3 +5,12 @@ artifacts/
 .vs/
 bin/
 obj/
+
+# wrapper build artifacts
+node_modules/
+package-lock.json
+target/
+__pycache__/
+*.pyc
+*.class
+*.lic
