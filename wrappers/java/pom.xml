@@ -1,23 +1,54 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Minimal POM for consumers who build with Maven. The sandbox test suite
-     does not use Maven; run ./run-tests.sh instead.
+<!-- Maven build + Maven Central publishing. The sandbox test suite does not
+     need Maven; run ./run-tests.sh instead.
 
      On JDK 21 the java.lang.foreign FFM API is a preview feature, so both
      compilation and execution need \-\-enable-preview. On JDK 22+ the API is
      final and the flag can be dropped (set maven.compiler.release to 22 and
-     remove the compilerArgs / argLine entries). -->
+     remove the compilerArgs / argLine entries).
+
+     Release jars bundle the native library per platform under /native/
+     (CI copies them into src/main/resources before deploying); the loader
+     in Native.java extracts the right one at runtime. CI publishes with
+     `mvn versions:set -DnewVersion=X.Y.Z && mvn -Prelease deploy`
+     (credentials: server id `central`; artifacts GPG-signed). -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.hymma</groupId>
-    <artifactId>hymma-licensing</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <artifactId>hymmalm</artifactId>
+    <version>0.1.2</version>
     <packaging>jar</packaging>
 
-    <name>hymma-licensing</name>
-    <description>Java wrapper (java.lang.foreign) for the hymma license-management-core native library</description>
+    <name>hymmalm</name>
+    <description>Licensing client for license-management.com: JWS-signed license
+        verification, trial bootstrap, activation and offline cache. Java
+        (java.lang.foreign) wrapper over the license-management-core native
+        library, bundled per platform.</description>
+    <url>https://github.com/HYMMA/license-management-core</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://github.com/HYMMA/license-management-core/blob/main/LICENSE</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <organization>Hymma</organization>
+            <organizationUrl>https://hymma.net</organizationUrl>
+            <email>info@hymma.net</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/HYMMA/license-management-core.git</connection>
+        <developerConnection>scm:git:git@github.com:HYMMA/license-management-core.git</developerConnection>
+        <url>https://github.com/HYMMA/license-management-core</url>
+    </scm>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -50,4 +81,79 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Everything Maven Central requires beyond the plain jar: sources,
+             javadoc, GPG signatures, and the Central Portal upload. -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.6.3</version>
+                        <configuration>
+                            <release>21</release>
+                            <doclint>none</doclint>
+                            <additionalOptions>
+                                <additionalOption>--enable-preview</additionalOption>
+                            </additionalOptions>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.4</version>
+                        <configuration>
+                            <gpgArguments>
+                                <arg>--pinentry-mode</arg>
+                                <arg>loopback</arg>
+                            </gpgArguments>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.6.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

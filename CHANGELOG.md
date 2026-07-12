@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Maven Central publishing on `v*` tags (`com.hymma:hymmalm`): release jars
+  bundle all five platform libraries under `/native/` and the Java loader
+  extracts the right one at runtime — same batteries-included install as
+  pip/npm. Sources + javadoc attached, artifacts GPG-signed, uploaded via
+  the Central Portal (`CENTRAL_USERNAME`/`CENTRAL_PASSWORD`,
+  `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE`).
+
 - **Portable Ed25519 (EdDSA) verification** in the built-in crypto backend —
   dependency-free C99 (16-bit-limb field arithmetic, no `__int128`, MSVC and
   32-bit MCU friendly), with RFC 8032 canonicality checks (rejects S ≥ L
