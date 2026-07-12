@@ -19,5 +19,16 @@
     "licensing",
     "jws",
     "hymma"
-  ]
+  ],
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "prebuilt/",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HYMMA/license-management-core.git",
+    "directory": "wrappers/node"
+  }
 }

@@ -84,7 +84,10 @@ function candidates() {
     : process.platform === 'darwin' ? ['libhymmalm.dylib']
     : ['libhymmalm.so'];
   for (const name of names) {
-    list.push(path.join(__dirname, name)); // bundled alongside the package
+    // published releases bundle one library per platform under prebuilt/
+    list.push(path.join(__dirname, 'prebuilt',
+                        `${process.platform}-${process.arch}`, name));
+    list.push(path.join(__dirname, name)); // dropped alongside the package
     list.push(name); // standard loader search
   }
   return list;

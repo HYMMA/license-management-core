@@ -35,10 +35,12 @@ jobs:
             platform: macos-arm64
             cc: clang
             artifact: true
+            osx_target: '11.0'   # keeps the published wheel's macosx_11_0 tag honest
           - os: macos-13
             platform: macos-x64
             cc: clang
             artifact: true
+            osx_target: '10.15'
           # ...plus compiler cross-checks (test only, no artifact)
           - os: ubuntu-latest
             platform: linux-x64
@@ -53,7 +55,8 @@ jobs:
           if [ "${{ matrix.cc }}" != "msvc" ]; then
             export CC=${{ matrix.cc }}
           fi
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            ${{ matrix.osx_target && format('-DCMAKE_OSX_DEPLOYMENT_TARGET={0}', matrix.osx_target) || '' }}
 
       - name: Build
         run: cmake --build build --config Release
@@ -187,7 +190,100 @@ jobs:
         working-directory: wrappers/rust
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        run: |
+          # version comes from the release tag, like the NuGet job
+          sed -i "s/^version = \".*\"/version = \"${GITHUB_REF_NAME#v}\"/" Cargo.toml
+          cargo publish --allow-dirty
+
+  pypi:
+    name: publish hymmalm to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, wrappers]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble platform wheels + sdist
+        working-directory: wrappers/python
+        run: |
+          pip install build wheel setuptools auditwheel patchelf twine
+          sed -i "s/^version = \".*\"/version = \"${GITHUB_REF_NAME#v}\"/" pyproject.toml
+
+          # pure sdist first (no native library inside)
+          python -m build --sdist -o dist/upload
+
+          # one py3-none-<platform> wheel per native artifact
+          while read -r plat tag lib audit; do
+            rm -rf build   # setuptools' build dir caches package data across runs
+            rm -f hymmalm/*.so hymmalm/*.dylib hymmalm/*.dll
+            cp "../../artifacts/licMngm-core-$plat/$lib" hymmalm/
+            python setup.py -q bdist_wheel --plat-name "$tag"
+            if [ "$audit" = "audit" ]; then
+              # verifies only whitelisted system libs are linked and computes
+              # the real manylinux floor (cross-arch safe: pure ELF analysis)
+              auditwheel repair dist/hymmalm-*-"$tag".whl -w dist/upload
+              rm dist/hymmalm-*-"$tag".whl
+            else
+              mv dist/hymmalm-*-"$tag".whl dist/upload/
+            fi
+          done <<'PLATFORMS'
+          linux-x64 linux_x86_64 libhymmalm.so audit
+          linux-arm64 linux_aarch64 libhymmalm.so audit
+          macos-arm64 macosx_11_0_arm64 libhymmalm.dylib -
+          macos-x64 macosx_10_15_x86_64 libhymmalm.dylib -
+          windows-x64 win_amd64 hymmalm.dll -
+          PLATFORMS
+          ls -l dist/upload
+
+      - name: Upload to PyPI
+        working-directory: wrappers/python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload --skip-existing dist/upload/*
+
+  npm:
+    name: publish hymmalm to npm
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, wrappers]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Bundle per-platform native libraries
+        working-directory: wrappers/node
+        run: |
+          while read -r plat dir lib; do
+            mkdir -p "prebuilt/$dir"
+            cp "../../artifacts/licMngm-core-$plat/$lib" "prebuilt/$dir/"
+          done <<'PLATFORMS'
+          linux-x64 linux-x64 libhymmalm.so
+          linux-arm64 linux-arm64 libhymmalm.so
+          macos-arm64 darwin-arm64 libhymmalm.dylib
+          macos-x64 darwin-x64 libhymmalm.dylib
+          windows-x64 win32-x64 hymmalm.dll
+          PLATFORMS
+
+      - name: Publish
+        working-directory: wrappers/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+          npm publish --access public
 
   nuget:
     name: publish LicenseManagement.Core to NuGet

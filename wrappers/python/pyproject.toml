@@ -18,3 +18,6 @@ classifiers = [
 
 [tool.setuptools.packages.find]
 include = ["hymmalm*"]
+
+[tool.setuptools.package-data]
+hymmalm = ["*.so", "*.dylib", "*.dll"]

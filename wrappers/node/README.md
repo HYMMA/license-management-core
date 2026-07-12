@@ -7,6 +7,17 @@ rules, machine fingerprinting, the REST client flow, retries, clock-tamper
 resistance) lives in the native core, so every language wrapper behaves
 identically.
 
+## Installing
+
+```bash
+npm install hymmalm
+```
+
+Published releases bundle the native library for linux-x64/arm64,
+macOS arm64/x64 and Windows x64 under `prebuilt/` — nothing else to
+install. On other platforms, build the core yourself and see "Locating the
+native library" below.
+
 ## Usage
 
 ```js
@@ -40,8 +51,15 @@ The wrapper looks for the shared library in this order:
 
 1. `HYMMALM_LIB` environment variable — the **full path** to the built
    library, e.g. `/path/to/license-management-core/build/libhymmalm.so`
-2. `libhymmalm.so` / `libhymmalm.dylib` / `hymmalm.dll` next to `index.js`
-3. the standard system loader search
+2. `prebuilt/<platform>-<arch>/` inside the package (release bundles)
+3. `libhymmalm.so` / `libhymmalm.dylib` / `hymmalm.dll` next to `index.js`
+4. the standard system loader search
+
+## Publishing
+
+CI publishes to npm on `v*` release tags (the `npm` job): it arranges each
+platform's freshly built library under `prebuilt/`, sets the version from
+the tag, and runs `npm publish` authenticated by the `NPM_TOKEN` secret.
 
 ## Running the tests
 

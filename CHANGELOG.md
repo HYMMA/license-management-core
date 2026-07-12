@@ -33,7 +33,11 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Publishing: the Go module and Rust crate are self-contained (C core
   vendored via `sync-csrc.sh`, drift-checked in CI). Go releases via
   `wrappers/go/vX.Y.Z` tags (no registry); the `hymmalm` crate publishes to
-  crates.io automatically on `v*` tags (`CARGO_REGISTRY_TOKEN`).
+  crates.io automatically on `v*` tags (`CARGO_REGISTRY_TOKEN`); PyPI
+  publishing on `v*` tags builds one binary wheel per platform (native
+  library bundled, linux wheels vetted/retagged by auditwheel) plus a pure
+  sdist (`PYPI_API_TOKEN`); npm publishing on `v*` tags bundles all five
+  platform libraries under `prebuilt/` in one package (`NPM_TOKEN`).
 
 ## [0.1.1] - 2026-07-10
 
