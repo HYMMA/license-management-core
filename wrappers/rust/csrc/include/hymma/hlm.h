@@ -94,7 +94,8 @@ typedef struct {
 hlm_crypto hlm_crypto_portable(void);
 
 #if defined(_WIN32)
-/* Windows CNG (bcrypt) backend — RS256 + ES256. */
+/* Windows CNG (bcrypt) backend — RS256 + ES256 via the OS; EdDSA via the
+ * portable Ed25519 verifier (CNG has no Ed25519). */
 hlm_crypto hlm_crypto_cng(void);
 #endif
 

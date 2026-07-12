@@ -1,4 +1,7 @@
-/* Windows CNG (bcrypt) crypto backend — RS256 + ES256 via the OS. */
+/* Windows CNG (bcrypt) crypto backend — RS256 + ES256 via the OS.
+ * EdDSA delegates to the portable Ed25519 verifier: CNG has no Ed25519
+ * support, and apps that pick this backend should still verify every
+ * format the server signs. */
 #if defined(_WIN32)
 
 #include <windows.h>
@@ -6,6 +9,7 @@
 #include <string.h>
 
 #include "hymma/hlm.h"
+#include "hlm_ed25519.h"
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -125,6 +129,9 @@ static int cng_verify(void *user, const hlm_public_key *key,
         return cng_verify_rsa(key, msg, msg_len, sig, sig_len);
     case HLM_ALG_ES256:
         return cng_verify_ecdsa(key, msg, msg_len, sig, sig_len);
+    case HLM_ALG_EDDSA:
+        if (sig_len != 64) return 0;
+        return hlm_ed25519_verify(key->u.ed25519.pub, msg, msg_len, sig);
     default:
         return HLM_E_UNSUPPORTED_ALG;
     }
