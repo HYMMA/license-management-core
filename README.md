@@ -19,7 +19,7 @@ security-critical logic once, in C, and every SDK inherits identical behavior.
                     ┌───────────────────────────────────────────┐
    .NET  Python     │              hymmalm (C99)                │
    Java  Node  Go   │                                           │
-   C++   Rust  ...  │  JWS verify (RS256 / ES256 / EdDSA*)      │
+   PHP   Rust  C++  │  JWS verify (RS256 / ES256 / EdDSA)       │
         │           │  license model + status state machine     │
         ▼           │  machine fingerprint (SDK-compatible)     │
   hlm_ffi.h flat    │  REST client flow (register → license →   │
@@ -29,7 +29,8 @@ security-critical logic once, in C, and every SDK inherits identical behavior.
                     │  crypto   http    storage   clock   id    │
                     │  ────────────────────────────────────     │
                     │  portable WinHTTP file      time()  SMBIOS│  ← built-in
-                    │  CNG      (yours) (flash)   (RTC)  (UID)  │  ← you plug in
+                    │  CNG      curl    (flash)   (RTC) machine-id  (Win/POSIX)
+                    │           (yours)                  (UID)  │  ← you plug in
                     └───────────────────────────────────────────┘
 ```
 
@@ -139,9 +140,25 @@ if (status == LicenseStatus.InvalidTrial)
     client.Activate(userEnteredReceiptCode);
 ```
 
-Wrapping from other languages is the same ~hundred lines: Python `ctypes`,
-Java JNA, Node `koffi`, Go `cgo`, Rust `bindgen` — see `hlm_ffi.h`, which is
-deliberately strings-and-ints only.
+The same pattern, already implemented and tested, ships for the other
+languages under `wrappers/`:
+
+| Wrapper | Binding | Notes |
+|---|---|---|
+| `wrappers/dotnet` | P/Invoke | the reference binding; NuGet `LicenseManagement.Core` |
+| `wrappers/python` | `ctypes` | stdlib only, `pip`-packageable (`hymmalm`) |
+| `wrappers/node` | `koffi` | CommonJS + TypeScript declarations |
+| `wrappers/go` | `cgo` | vendors + compiles the core — plain `go get`, no prebuilt library |
+| `wrappers/java` | FFM (`java.lang.foreign`) | JDK 21 (preview) / 22+ (final), zero deps |
+| `wrappers/php` | `FFI` | PHP ≥ 8.1 |
+| `wrappers/rust` | `unsafe extern` + `cc` | compiles the core in `build.rs` — self-contained crate, drop into **Tauri** apps |
+
+Each wrapper ships two test layers: the signed-vector suite (the wrapper
+must verify exactly what the server signs and reject tampered tokens) and a
+full client-flow suite against a local mock API (trial bootstrap → activate
+→ offline cache → deactivate, plus refusal classification). Every wrapper
+exposes the same facade: `check / activate / deactivate / refresh`, license
+state accessors, `machine_id`, and offline `verify`.
 
 ## Building
 
@@ -168,10 +185,17 @@ the OS implementation on every run. The .NET demo
 (`wrappers/dotnet/LicenseManagement.Core.Demo`) runs the same vectors through
 P/Invoke. If these are green, the core verifies exactly what production signs.
 
+EdDSA coverage comes from `tests/vectors/vectors-eddsa.json`: the valid
+payloads from `vectors.json` re-signed with a fixed Ed25519 key by the
+`cryptography` reference implementation (`tools/eddsa-vectorgen`), plus
+tampered / truncated / malleable-S / wrong-key variants. Language wrappers
+replay both vector files through `hlm_ffi_verify`.
+
 Regenerate vectors after a server-side signing change:
 
 ```bash
 cd tools/vectorgen && dotnet run -c Release -- ../../tests/vectors/vectors.json
+python tools/eddsa-vectorgen/gen.py   # needs `pip install cryptography`
 ```
 
 ## Wire contract (pinned by this repo)
@@ -214,14 +238,19 @@ that mirrors the concepts of `LicenseManagement.EndUser.Test`:
 
 ## Scope & roadmap
 
-- [ ] Portable Ed25519 verify (`HLM_ALG_EDDSA` currently needs a custom
-      crypto port; server already signs `format=eddsa`)
-- [ ] POSIX ports: libcurl `hlm_http`, `/etc/machine-id`-based fingerprint
+- [x] Portable Ed25519 verify (`HLM_ALG_EDDSA`; RFC 8032 canonicality checks,
+      no `__int128` so MSVC/32-bit MCUs build it) — done
+- [x] POSIX ports: libcurl `hlm_http` (dlopen'd, no link dependency),
+      `/etc/machine-id` (Linux) / `gethostuuid` (macOS) fingerprint, SNTP
+      trusted time — done
+- [x] Language wrappers with tests: Python, Node, Go, Java, PHP, Rust/Tauri
+      (`wrappers/`) — done
 - [ ] P-256 fast reduction (verification is ~100 ms portable; correctness
       first, speed later — licenses verify once per launch)
 - [ ] Offline request/response activation files (air-gapped desktops)
 - [x] Clock-tamper trusted-time cascade (w32time / SNTP / GET DateTime) — done
-- [ ] CI: build matrix (MSVC/gcc/clang × x64/arm64) + artifact publishing
+- [x] CI: build matrix (MSVC/gcc/clang × x64/arm64) + artifact publishing —
+      done, plus per-wrapper test jobs
 
 **Non-goals:** XML-DSig verification (that is what `format=jws` exists to
 avoid); private-key operations (this library never signs anything).

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hymmalm"
+version = "0.1.1"
+description = "Python wrapper for license-management-core (License-Management.com client)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Hymma" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[tool.setuptools.packages.find]
+include = ["hymmalm*"]
+
+[tool.setuptools.package-data]
+hymmalm = ["*.so", "*.dylib", "*.dll"]
