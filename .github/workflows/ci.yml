@@ -36,7 +36,7 @@ jobs:
             cc: clang
             artifact: true
             osx_target: '11.0'   # keeps the published wheel's macosx_11_0 tag honest
-          - os: macos-13
+          - os: macos-15-intel   # last Intel runner GitHub offers (macos-13 is retired)
             platform: macos-x64
             cc: clang
             artifact: true
