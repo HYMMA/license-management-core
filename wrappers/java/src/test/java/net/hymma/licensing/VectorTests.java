@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -6,9 +6,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
-import static com.hymma.licensing.TestRunner.assertEquals;
-import static com.hymma.licensing.TestRunner.assertTrue;
-import static com.hymma.licensing.TestRunner.expectLicenseError;
+import static net.hymma.licensing.TestRunner.assertEquals;
+import static net.hymma.licensing.TestRunner.assertTrue;
+import static net.hymma.licensing.TestRunner.expectLicenseError;
 
 /**
  * Vector-driven compatibility tests: the wrapper must verify exactly what the

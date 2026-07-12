@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 /**
  * Options for {@link LicenseClient}.

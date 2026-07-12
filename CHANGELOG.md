@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Maven Central publishing on `v*` tags (`com.hymma:hymmalm`): release jars
+- Maven Central publishing on `v*` tags (`net.hymma:hymmalm`): release jars
   bundle all five platform libraries under `/native/` and the Java loader
   extracts the right one at runtime — same batteries-included install as
   pip/npm. Sources + javadoc attached, artifacts GPG-signed, uploaded via

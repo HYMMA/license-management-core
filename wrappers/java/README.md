@@ -11,7 +11,7 @@ marshals.
 
 ```xml
 <dependency>
-    <groupId>com.hymma</groupId>
+    <groupId>net.hymma</groupId>
     <artifactId>hymmalm</artifactId>
     <version>0.1.2</version>
 </dependency>
@@ -45,7 +45,7 @@ Portal (`CENTRAL_USERNAME` / `CENTRAL_PASSWORD` / `GPG_PRIVATE_KEY` /
 ## Usage
 
 ```java
-import com.hymma.licensing.*;
+import net.hymma.licensing.*;
 
 try (var client = new LicenseClient(LicenseClientOptions.builder()
         .productId("PRD_01KWWPEPM0N070BDAHJ7G09RGV")
