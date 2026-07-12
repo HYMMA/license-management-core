@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

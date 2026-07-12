@@ -36,4 +36,4 @@ echo "== running tests =="
 cd "$DIR"  # tests resolve ../../tests/vectors relative to this directory
 HLM_TIMESYNC=off HYMMALM_LIB="$LIB" \
     java --enable-preview --enable-native-access=ALL-UNNAMED \
-    -cp "$OUT" com.hymma.licensing.TestRunner
+    -cp "$OUT" net.hymma.licensing.TestRunner

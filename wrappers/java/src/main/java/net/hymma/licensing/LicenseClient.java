@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 import java.lang.foreign.MemorySegment;
 import java.time.Instant;

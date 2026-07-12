@@ -7,22 +7,45 @@ client flow, retry policy and clock-tamper resistance — lives in the native
 core, so every language wrapper behaves identically. This package only
 marshals.
 
+## Installing
+
+```xml
+<dependency>
+    <groupId>net.hymma</groupId>
+    <artifactId>hymmalm</artifactId>
+    <version>0.1.2</version>
+</dependency>
+```
+
+Release jars bundle the native library for linux-x64/arm64, macOS arm64/x64
+and Windows x64 under `/native/`; the loader extracts the right one at
+runtime — nothing else to install.
+
 ## Requirements
 
 - **JDK 21**: the FFM API is a *preview* feature — compile with
   `javac --release 21 --enable-preview` and run with `java --enable-preview`.
 - **JDK 22+**: the FFM API is final; the `--enable-preview` flags can be
   dropped (the code compiles unchanged).
-- The native library, built with CMake from the repo root
-  (`build/libhymmalm.so`). It is located via the **`HYMMALM_LIB`**
-  environment variable (full path), falling back to the standard loader
-  search for `System.mapLibraryName("hymmalm")` (`libhymmalm.so` /
-  `libhymmalm.dylib` / `hymmalm.dll` on `java.library.path` / `LD_LIBRARY_PATH`).
+- Outside the release jar (source checkouts), the native library is built
+  with CMake from the repo root (`build/libhymmalm.so`) and located via the
+  **`HYMMALM_LIB`** environment variable (full path), then the bundled
+  `/native/<os>-<arch>/` jar resource, then the standard loader search for
+  `System.mapLibraryName("hymmalm")`.
+
+## Publishing
+
+CI publishes to Maven Central on `v*` release tags (the `maven` job): it
+drops each platform's freshly built library into `src/main/resources/native/`,
+sets the version from the tag, and runs `mvn -Prelease deploy` — sources +
+javadoc jars attached, artifacts GPG-signed, uploaded via the Central
+Portal (`CENTRAL_USERNAME` / `CENTRAL_PASSWORD` / `GPG_PRIVATE_KEY` /
+`GPG_PASSPHRASE` secrets).
 
 ## Usage
 
 ```java
-import com.hymma.licensing.*;
+import net.hymma.licensing.*;
 
 try (var client = new LicenseClient(LicenseClientOptions.builder()
         .productId("PRD_01KWWPEPM0N070BDAHJ7G09RGV")

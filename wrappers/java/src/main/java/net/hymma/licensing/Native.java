@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
@@ -17,10 +17,11 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * here; all licensing logic lives in the native core — this class only
  * marshals strings and integers across the boundary.
  *
- * <p>The shared library is located via the {@code HYMMALM_LIB} environment
- * variable (full path to {@code libhymmalm.so}/{@code .dylib}/{@code .dll}),
- * falling back to the standard loader search for
- * {@code System.mapLibraryName("hymmalm")}.
+ * <p>The shared library is located in this order: the {@code HYMMALM_LIB}
+ * environment variable (full path), a library bundled in the jar under
+ * {@code /native/&lt;os&gt;-&lt;arch&gt;/} (release jars carry one per
+ * platform, extracted to a temp file on first use), then the standard
+ * loader search for {@code System.mapLibraryName("hymmalm")}.
  */
 final class Native {
 
@@ -29,9 +30,17 @@ final class Native {
 
     private static SymbolLookup loadLibrary() {
         String env = System.getenv("HYMMALM_LIB");
-        String name = (env != null && !env.isEmpty())
-                ? env
-                : System.mapLibraryName("hymmalm");
+        if (env != null && !env.isEmpty()) {
+            return lookupOrThrow(env);
+        }
+        String bundled = extractBundled();
+        if (bundled != null) {
+            return lookupOrThrow(bundled);
+        }
+        return lookupOrThrow(System.mapLibraryName("hymmalm"));
+    }
+
+    private static SymbolLookup lookupOrThrow(String name) {
         try {
             return SymbolLookup.libraryLookup(name, Arena.global());
         } catch (IllegalArgumentException e) {
@@ -39,6 +48,32 @@ final class Native {
                     "cannot load the native hymmalm library (" + name + "); "
                     + "build it with cmake and set HYMMALM_LIB to the full path "
                     + "of libhymmalm.so/.dylib/hymmalm.dll: " + e);
+        }
+    }
+
+    /** Extract the platform's library bundled in the jar, or null if absent. */
+    private static String extractBundled() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String arch = System.getProperty("os.arch", "").toLowerCase();
+        String osKey = os.contains("win") ? "windows"
+                : os.contains("mac") ? "macos" : "linux";
+        String archKey = (arch.equals("aarch64") || arch.equals("arm64"))
+                ? "arm64" : "x64";
+        String libName = System.mapLibraryName("hymmalm");
+        String resource = "/native/" + osKey + "-" + archKey + "/" + libName;
+
+        try (java.io.InputStream in = Native.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                return null;
+            }
+            java.nio.file.Path tmp = java.nio.file.Files.createTempFile(
+                    "hymmalm-", libName.substring(libName.lastIndexOf('.')));
+            java.nio.file.Files.copy(in, tmp,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            tmp.toFile().deleteOnExit();
+            return tmp.toAbsolutePath().toString();
+        } catch (java.io.IOException e) {
+            return null; // fall through to the system loader search
         }
     }
 

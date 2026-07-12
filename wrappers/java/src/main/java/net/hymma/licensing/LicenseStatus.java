@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 /** Mirrors the native {@code hlm_status} / the .NET SDK's LicenseStatusTitles. */
 public enum LicenseStatus {

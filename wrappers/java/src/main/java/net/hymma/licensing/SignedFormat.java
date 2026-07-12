@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 /** Signed-license wire formats the server can emit. */
 public enum SignedFormat {

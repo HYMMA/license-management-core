@@ -1,4 +1,4 @@
-package com.hymma.licensing;
+package net.hymma.licensing;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -16,9 +16,9 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 
-import static com.hymma.licensing.TestRunner.assertEquals;
-import static com.hymma.licensing.TestRunner.assertTrue;
-import static com.hymma.licensing.TestRunner.expectLicenseError;
+import static net.hymma.licensing.TestRunner.assertEquals;
+import static net.hymma.licensing.TestRunner.assertTrue;
+import static net.hymma.licensing.TestRunner.expectLicenseError;
 
 /**
  * End-to-end client flow against a local mock of the license API.
