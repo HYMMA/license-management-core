@@ -8,17 +8,22 @@ namespace LicenseManagement.Core
     {
         private const string Lib = "hymmalm";
 
+        // UnmanagedType.LPUTF8Str (48) is missing from the netstandard2.0
+        // reference assembly, but every supported runtime (.NET Framework
+        // 4.7+, .NET, Mono) implements the marshaller. The C ABI is UTF-8.
+        private const UnmanagedType LPUTF8Str = (UnmanagedType)48;
+
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr hlm_ffi_create(
-            [MarshalAs(UnmanagedType.LPStr)] string? baseUrl,
-            [MarshalAs(UnmanagedType.LPStr)] string productId,
-            [MarshalAs(UnmanagedType.LPStr)] string clientApiKey,
-            [MarshalAs(UnmanagedType.LPStr)] string jwksJson,
+            [MarshalAs(LPUTF8Str)] string? baseUrl,
+            [MarshalAs(LPUTF8Str)] string productId,
+            [MarshalAs(LPUTF8Str)] string clientApiKey,
+            [MarshalAs(LPUTF8Str)] string jwksJson,
             int format,
             uint validDays,
-            [MarshalAs(UnmanagedType.LPStr)] string? machineId,
-            [MarshalAs(UnmanagedType.LPStr)] string? machineName,
-            [MarshalAs(UnmanagedType.LPStr)] string? licensePath);
+            [MarshalAs(LPUTF8Str)] string? machineId,
+            [MarshalAs(LPUTF8Str)] string? machineName,
+            [MarshalAs(LPUTF8Str)] string? licensePath);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void hlm_ffi_destroy(IntPtr client);
@@ -28,7 +33,7 @@ namespace LicenseManagement.Core
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int hlm_ffi_activate(IntPtr client,
-            [MarshalAs(UnmanagedType.LPStr)] string receiptCode);
+            [MarshalAs(LPUTF8Str)] string receiptCode);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int hlm_ffi_deactivate(IntPtr client);
@@ -65,7 +70,7 @@ namespace LicenseManagement.Core
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr hlm_ffi_metadata(IntPtr client,
-            [MarshalAs(UnmanagedType.LPStr)] string key);
+            [MarshalAs(LPUTF8Str)] string key);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int hlm_ffi_last_http_status(IntPtr client);
@@ -86,14 +91,25 @@ namespace LicenseManagement.Core
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int hlm_ffi_verify(
-            [MarshalAs(UnmanagedType.LPStr)] string jws,
-            [MarshalAs(UnmanagedType.LPStr)] string jwksJson,
-            [MarshalAs(UnmanagedType.LPStr)] string? expectedProductId,
-            [MarshalAs(UnmanagedType.LPStr)] string? expectedMachineId,
+            [MarshalAs(LPUTF8Str)] string jws,
+            [MarshalAs(LPUTF8Str)] string jwksJson,
+            [MarshalAs(LPUTF8Str)] string? expectedProductId,
+            [MarshalAs(LPUTF8Str)] string? expectedMachineId,
             long now,
             out int status);
 
-        internal static string Str(IntPtr p) =>
-            p == IntPtr.Zero ? string.Empty : Marshal.PtrToStringAnsi(p) ?? string.Empty;
+        // The C ABI is UTF-8; PtrToStringAnsi would mojibake every non-ASCII
+        // product name / buyer email / error detail. (netstandard2.0 has no
+        // Marshal.PtrToStringUTF8, so read the bytes manually.)
+        internal static string Str(IntPtr p)
+        {
+            if (p == IntPtr.Zero) return string.Empty;
+            int len = 0;
+            while (Marshal.ReadByte(p, len) != 0) len++;
+            if (len == 0) return string.Empty;
+            var bytes = new byte[len];
+            Marshal.Copy(p, bytes, 0, len);
+            return System.Text.Encoding.UTF8.GetString(bytes);
+        }
     }
 }

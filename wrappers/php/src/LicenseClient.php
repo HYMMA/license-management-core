@@ -158,7 +158,8 @@ class LicenseClient
 
     public function status(): LicenseStatus
     {
-        return LicenseStatus::from(Native::get()->hlm_ffi_status($this->h()));
+        return LicenseStatus::tryFrom(Native::get()->hlm_ffi_status($this->h()))
+            ?? LicenseStatus::Unknown;
     }
 
     public function statusName(): string
@@ -268,7 +269,7 @@ class LicenseClient
             throw new LicenseException($r);
         }
 
-        return LicenseStatus::from($statusOut->cdata);
+        return LicenseStatus::tryFrom($statusOut->cdata) ?? LicenseStatus::Unknown;
     }
 
     /** Unix seconds -> DateTimeImmutable (UTC); INT64_MIN means "none". */

@@ -101,7 +101,7 @@ class LicenseError(Exception):
         except ValueError:
             self.code = None
         self.detail = detail
-        name = _lib().hlm_ffi_err_name(code).decode()
+        name = (_lib().hlm_ffi_err_name(code) or b"").decode()
         super().__init__(f"{name}: {detail}" if detail else name)
 
 
@@ -298,7 +298,7 @@ class LicenseClient:
 
     def _guard(self, err: int) -> LicenseStatus:
         if err != 0:
-            detail = _lib().hlm_ffi_last_error_detail(self._handle).decode()
+            detail = (_lib().hlm_ffi_last_error_detail(self._handle) or b"").decode()
             raise LicenseError(err, detail)
         return self.status
 
@@ -329,15 +329,15 @@ class LicenseClient:
 
     @property
     def license_id(self) -> str:
-        return _lib().hlm_ffi_license_id(self._handle).decode()
+        return (_lib().hlm_ffi_license_id(self._handle) or b"").decode()
 
     @property
     def product_name(self) -> str:
-        return _lib().hlm_ffi_product_name(self._handle).decode()
+        return (_lib().hlm_ffi_product_name(self._handle) or b"").decode()
 
     @property
     def buyer_email(self) -> str:
-        return _lib().hlm_ffi_buyer_email(self._handle).decode()
+        return (_lib().hlm_ffi_buyer_email(self._handle) or b"").decode()
 
     @property
     def live_mode(self) -> bool:
@@ -360,4 +360,4 @@ class LicenseClient:
         return _lib().hlm_ffi_last_http_status(self._handle)
 
     def metadata(self, key: str) -> str:
-        return _lib().hlm_ffi_metadata(self._handle, _enc(key)).decode()
+        return (_lib().hlm_ffi_metadata(self._handle, _enc(key)) or b"").decode()
