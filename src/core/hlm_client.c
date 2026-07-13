@@ -89,6 +89,11 @@ static const char *format_param(hlm_alg alg)
     }
 }
 
+static int http_is_success(int status)
+{
+    return status >= 200 && status < 300;
+}
+
 static int is_transient(int status)
 {
     if (status == 429 || status == 408) return 1;
@@ -235,7 +240,7 @@ static int fetch_server_time(hlm_client *c, int64_t *now_out)
 
     r = send_req(c, "GET", "DateTime", NULL, NULL, &status);
     if (r != HLM_OK) return r;
-    if (status < 200 || status >= 300) return map_api_error(c, status);
+    if (!http_is_success(status)) return map_api_error(c, status);
 
     s = c->resp;
     len = strlen(s);
@@ -347,13 +352,13 @@ static int ensure_computer(hlm_client *c, char *pc_id, size_t pc_id_cap)
 
     r = send_req(c, "POST", "computer", body, idem, &status);
     if (r != HLM_OK) return r;
-    if (!((status >= 200 && status < 300) || status == 409))
+    if (!http_is_success(status) && status != 409)
         return map_api_error(c, status);
 
     snprintf(path, sizeof(path), "computer?macAddress=%s", c->cfg.machine_id);
     r = send_req(c, "GET", path, NULL, NULL, &status);
     if (r != HLM_OK) return r;
-    if (status < 200 || status >= 300) return map_api_error(c, status);
+    if (!http_is_success(status)) return map_api_error(c, status);
 
     {
         hlm_json_tok toks[64];
@@ -383,7 +388,7 @@ static int post_license(hlm_client *c, const char *pc_id)
 
     r = send_req(c, "POST", "license", body, idem, &status);
     if (r != HLM_OK) return r;
-    if (!((status >= 200 && status < 300) || status == 409))
+    if (!http_is_success(status) && status != 409)
         return map_api_error(c, status);
     return HLM_OK;
 }
@@ -401,7 +406,7 @@ static int get_signed_license(hlm_client *c, const char *pc_id)
 
     r = send_req(c, "GET", path, NULL, NULL, &status);
     if (r != HLM_OK) return r;
-    if (status < 200 || status >= 300) return map_api_error(c, status);
+    if (!http_is_success(status)) return map_api_error(c, status);
 
     len = strlen(c->resp);
     if (len == 0 || c->resp[0] == '<') return HLM_E_FORMAT; /* XML => bad format param */
@@ -499,17 +504,16 @@ static int patch_license(hlm_client *c, const char *code_or_null)
         if (r != HLM_OK) return r;
     }
 
-    if (status != 204 && (status < 200 || status >= 300))
+    if (status != 204 && !http_is_success(status))
         return map_api_error(c, status);
     return HLM_OK;
 }
 
-int hlm_client_activate(hlm_client *c, const char *receipt_code)
+/* Shared activate/deactivate flow: PATCH the receipt code (NULL frees the
+ * seat), then refresh the signed license. */
+static int set_receipt_code(hlm_client *c, const char *code_or_null)
 {
     int r;
-
-    if (c == NULL || receipt_code == NULL || receipt_code[0] == '\0')
-        return HLM_E_ARG;
 
     resolve_now(c);
 
@@ -518,25 +522,20 @@ int hlm_client_activate(hlm_client *c, const char *receipt_code)
         if (r != HLM_OK) return r;
     }
 
-    r = patch_license(c, receipt_code);
+    r = patch_license(c, code_or_null);
     if (r != HLM_OK) return r;
     return refresh_internal(c);
 }
 
+int hlm_client_activate(hlm_client *c, const char *receipt_code)
+{
+    if (c == NULL || receipt_code == NULL || receipt_code[0] == '\0')
+        return HLM_E_ARG;
+    return set_receipt_code(c, receipt_code);
+}
+
 int hlm_client_deactivate(hlm_client *c)
 {
-    int r;
-
     if (c == NULL) return HLM_E_ARG;
-
-    resolve_now(c);
-
-    if (!c->has_license) {
-        r = check_internal(c);
-        if (r != HLM_OK) return r;
-    }
-
-    r = patch_license(c, NULL);
-    if (r != HLM_OK) return r;
-    return refresh_internal(c);
+    return set_receipt_code(c, NULL);
 }

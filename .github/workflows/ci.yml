@@ -46,6 +46,13 @@ jobs:
             platform: linux-x64
             cc: clang
             artifact: false
+          # sanitizer leg: UBSan trips signed-shift/aliasing UB on the first
+          # verify; ASan catches parser OOB. Warnings are errors here.
+          - os: ubuntu-latest
+            platform: linux-x64-asan-ubsan
+            cc: clang
+            artifact: false
+            sanitize: address,undefined
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +62,13 @@ jobs:
           if [ "${{ matrix.cc }}" != "msvc" ]; then
             export CC=${{ matrix.cc }}
           fi
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+          EXTRA=""
+          if [ -n "${{ matrix.sanitize }}" ]; then
+            export CFLAGS="-fsanitize=${{ matrix.sanitize }} -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
+            export LDFLAGS="-fsanitize=${{ matrix.sanitize }}"
+            EXTRA="-DHLM_WERROR=ON"
+          fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release $EXTRA \
             ${{ matrix.osx_target && format('-DCMAKE_OSX_DEPLOYMENT_TARGET={0}', matrix.osx_target) || '' }}
 
       - name: Build
@@ -158,6 +171,37 @@ jobs:
           git diff --exit-code .   # vendored C copies must match ../../src
           cargo test
           cargo package            # prove the publishable tarball builds standalone
+
+  wrappers-windows:
+    # the vendored go/rust builds compile hlm_port_win.c / hlm_crypto_cng.c
+    # under their own toolchains (mingw cgo, MSVC cc-rs) — the linux wrapper
+    # job only proves text parity of the copies, not that they build.
+    name: ${{ matrix.wrapper }} wrapper (windows compile)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        wrapper: [go, rust]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        if: matrix.wrapper == 'go'
+        with:
+          go-version: 'stable'
+      - name: Go build
+        if: matrix.wrapper == 'go'
+        working-directory: wrappers/go
+        shell: bash
+        run: |
+          go vet ./...
+          go build ./...
+
+      - name: Rust build
+        if: matrix.wrapper == 'rust'
+        working-directory: wrappers/rust
+        shell: bash
+        run: cargo build --tests
 
   dotnet-wrapper:
     name: .NET wrapper (windows)

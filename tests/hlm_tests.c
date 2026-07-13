@@ -362,13 +362,17 @@ static void test_vector_sha256(void)
         char input[512], expected[80], got[65];
         uint8_t d[32];
         int t;
-        size_t n;
+        size_t n, n2;
 
         if (el < 0) break;
         t = hlm_json_member(&vec, el, "Input");
         n = hlm_json_string(&vec, t, input, sizeof(input));
+        CHECK(n != (size_t)-1, "sha256 vector input decodes");
+        if (n == (size_t)-1) continue;
         t = hlm_json_member(&vec, el, "Hex");
-        hlm_json_string(&vec, t, expected, sizeof(expected));
+        n2 = hlm_json_string(&vec, t, expected, sizeof(expected));
+        CHECK(n2 != (size_t)-1, "sha256 vector hex decodes");
+        if (n2 == (size_t)-1) continue;
 
         hlm_sha256(input, n, d);
         hex(d, 32, got);
@@ -386,16 +390,20 @@ static void test_vector_fingerprint(void)
         int el = hlm_json_element(&vec, arr, i);
         char c1[128], c2[128], expected[64], got[64];
         const char *components[2];
-        int t, comps;
+        int t, comps, ok;
 
         if (el < 0) break;
         comps = hlm_json_member(&vec, el, "Components");
         t = hlm_json_element(&vec, comps, 0);
-        hlm_json_string(&vec, t, c1, sizeof(c1));
+        ok = hlm_json_string(&vec, t, c1, sizeof(c1)) != (size_t)-1;
         t = hlm_json_element(&vec, comps, 1);
-        if (t >= 0) hlm_json_string(&vec, t, c2, sizeof(c2));
+        if (t >= 0)
+            ok = ok && hlm_json_string(&vec, t, c2, sizeof(c2)) != (size_t)-1;
         t = hlm_json_member(&vec, el, "Expected");
-        hlm_json_string(&vec, t, expected, sizeof(expected));
+        ok = ok && hlm_json_string(&vec, t, expected, sizeof(expected)) !=
+                       (size_t)-1;
+        CHECK(ok, "fingerprint vector fields decode");
+        if (!ok) continue;
 
         components[0] = c1;
         components[1] = c2;

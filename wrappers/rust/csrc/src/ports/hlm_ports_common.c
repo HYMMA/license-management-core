@@ -9,6 +9,30 @@
 #endif
 
 #include "hymma/hlm.h"
+#include "hlm_sntp.h"
+
+/* ---- SNTP packet helpers shared by the platform ports ---- */
+
+void hlm_sntp_build_request(uint8_t pkt[HLM_SNTP_PACKET_SIZE])
+{
+    memset(pkt, 0, HLM_SNTP_PACKET_SIZE);
+    pkt[0] = 0x1B; /* LI=0, VN=3, Mode=3 (client) */
+}
+
+int hlm_sntp_parse_reply(const uint8_t pkt[HLM_SNTP_PACKET_SIZE],
+                         int64_t *epoch_out)
+{
+    /* transmit timestamp: seconds since 1900-01-01, bytes 40-43 big-endian */
+    uint32_t secs = ((uint32_t)pkt[40] << 24) | ((uint32_t)pkt[41] << 16) |
+                    ((uint32_t)pkt[42] << 8) | (uint32_t)pkt[43];
+    if (secs == 0) return -1;
+    /* NTP era pivot: era-0 timestamps have the top bit set from 1968 through
+     * Feb-2036; a clear top bit means era 1 — add 2^32 s so trusted time
+     * keeps working past the rollover. 2208988800 s separate 1900 and 1970. */
+    *epoch_out = (int64_t)secs +
+                 ((secs & 0x80000000u) ? 0 : 4294967296LL) - 2208988800LL;
+    return 0;
+}
 
 static int64_t clock_now(void *user)
 {

@@ -44,10 +44,9 @@
 #include <unistd.h>
 
 #include "hymma/hlm.h"
+#include "hlm_sntp.h"
 
 #define HLM_HTTP_TIMEOUT_MS 15000 /* per request, matches the .NET SDK */
-#define HLM_NTP_TIMEOUT_MS 3000
-#define HLM_MAX_DRIFT_SECONDS 3600 /* 1.0 hour, matches TimeSyncConstants */
 
 /* ------------------------------------------------------------------ */
 /* libcurl transport (dlopen)                                          */
@@ -322,7 +321,7 @@ static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
 {
     struct addrinfo hints, *ai = NULL;
     int sock = -1;
-    uint8_t pkt[48];
+    uint8_t pkt[HLM_SNTP_PACKET_SIZE];
     int result = -1;
 
     memset(&hints, 0, sizeof(hints));
@@ -341,26 +340,15 @@ static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
 
-    memset(pkt, 0, sizeof(pkt));
-    pkt[0] = 0x1B; /* LI=0, VN=3, Mode=3 (client) */
+    hlm_sntp_build_request(pkt);
 
     if (sendto(sock, pkt, sizeof(pkt), 0, ai->ai_addr, ai->ai_addrlen) !=
         (ssize_t)sizeof(pkt))
         goto done;
     if (recv(sock, pkt, sizeof(pkt), 0) != (ssize_t)sizeof(pkt)) goto done;
 
-    {
-        /* transmit timestamp seconds since 1900-01-01, bytes 40-43 BE */
-        uint32_t secs = ((uint32_t)pkt[40] << 24) | ((uint32_t)pkt[41] << 16) |
-                        ((uint32_t)pkt[42] << 8) | (uint32_t)pkt[43];
-        if (secs == 0) goto done;
-        /* NTP era pivot: era-0 timestamps have the top bit set from 1968
-         * through Feb-2036; a clear top bit means era 1 — add 2^32 s so
-         * trusted time keeps working past the rollover. */
-        *epoch_out = (int64_t)secs +
-                     ((secs & 0x80000000u) ? 0 : 4294967296LL) - 2208988800LL;
-        result = 0;
-    }
+    if (hlm_sntp_parse_reply(pkt, epoch_out) != 0) goto done;
+    result = 0;
 
 done:
     if (sock >= 0) close(sock);

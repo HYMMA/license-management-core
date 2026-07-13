@@ -29,8 +29,8 @@ typedef struct {
 typedef struct {
     const char *src;
     size_t src_len;
-    hlm_json_tok *toks;
-    int count; /* tokens actually used */
+    const hlm_json_tok *toks; /* accessors never mutate tokens */
+    int count;                /* tokens actually used */
 } hlm_json_doc;
 
 /* Tokenize `src` into caller-provided token array.

@@ -44,8 +44,9 @@ int hlm_jws_verify(const char *jws, size_t jws_len,
 {
     const char *dot1, *dot2;
     size_t h_len, p_len, s_len;
-    char header_json[256];
-    uint8_t sig[512 + 8];
+    char header_json[256]; /* decoded JOSE header: {"alg":...,"typ":...} */
+    uint8_t sig[512 + 8];  /* RSA-4096 signature = 512 B; +8 covers the
+                              b64url decoder's worst-case quantum */
     size_t header_len, sig_len, payload_len;
     hlm_json_tok toks[16];
     hlm_json_doc doc;

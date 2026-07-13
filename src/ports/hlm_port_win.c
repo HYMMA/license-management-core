@@ -24,14 +24,13 @@
 #include <string.h>
 
 #include "hymma/hlm.h"
+#include "hlm_sntp.h"
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "advapi32.lib")
 
 #define HLM_HTTP_TIMEOUT_MS 15000 /* per request, matches the .NET SDK */
-#define HLM_NTP_TIMEOUT_MS 3000
-#define HLM_MAX_DRIFT_SECONDS 3600 /* 1.0 hour, matches TimeSyncConstants */
 
 /* ------------------------------------------------------------------ */
 /* WinHTTP transport                                                   */
@@ -266,7 +265,7 @@ static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
 {
     struct addrinfo hints, *ai = NULL;
     SOCKET sock = INVALID_SOCKET;
-    uint8_t pkt[48];
+    uint8_t pkt[HLM_SNTP_PACKET_SIZE];
     int result = -1;
 
     InitOnceExecuteOnce(&g_wsa_once, wsa_init_once, NULL, NULL);
@@ -287,27 +286,15 @@ static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tmo, sizeof(tmo));
     }
 
-    memset(pkt, 0, sizeof(pkt));
-    pkt[0] = 0x1B; /* LI=0, VN=3, Mode=3 (client) — same as NtpConnection */
+    hlm_sntp_build_request(pkt);
 
     if (sendto(sock, (const char *)pkt, sizeof(pkt), 0, ai->ai_addr,
                (int)ai->ai_addrlen) != sizeof(pkt))
         goto done;
     if (recv(sock, (char *)pkt, sizeof(pkt), 0) != sizeof(pkt)) goto done;
 
-    {
-        /* seconds since 1900-01-01 from bytes 40-43 (big-endian) */
-        uint32_t secs = ((uint32_t)pkt[40] << 24) | ((uint32_t)pkt[41] << 16) |
-                        ((uint32_t)pkt[42] << 8) | (uint32_t)pkt[43];
-        if (secs == 0) goto done;
-        /* 2208988800 = seconds between 1900-01-01 and 1970-01-01.
-         * NTP era pivot: era-0 timestamps have the top bit set from 1968
-         * through Feb-2036; a clear top bit means era 1 — add 2^32 s so
-         * trusted time keeps working past the rollover. */
-        *epoch_out = (int64_t)secs +
-                     ((secs & 0x80000000u) ? 0 : 4294967296LL) - 2208988800LL;
-        result = 0;
-    }
+    if (hlm_sntp_parse_reply(pkt, epoch_out) != 0) goto done;
+    result = 0;
 
 done:
     if (sock != INVALID_SOCKET) closesocket(sock);
@@ -439,10 +426,7 @@ static int smbios_baseboard_serial(char *out, size_t out_len)
         return -1;
     buf = (BYTE *)HeapAlloc(GetProcessHeap(), 0, size);
     if (buf == NULL) return -1;
-    if (GetSystemFirmwareTable('RSMB', 0, buf, size) != size) {
-        HeapFree(GetProcessHeap(), 0, buf);
-        return -1;
-    }
+    if (GetSystemFirmwareTable('RSMB', 0, buf, size) != size) goto done;
 
     smb = (raw_smbios *)buf;
     p = smb->SMBIOSTableData;
@@ -481,6 +465,7 @@ static int smbios_baseboard_serial(char *out, size_t out_len)
         p = q;
     }
 
+done:
     HeapFree(GetProcessHeap(), 0, buf);
     return found ? 0 : -1;
 }

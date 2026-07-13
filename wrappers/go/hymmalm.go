@@ -33,6 +33,7 @@ package hymmalm
 // no prebuilt library, no include paths outside the module.
 
 #cgo CFLAGS: -I${SRCDIR}/include
+#cgo windows CFLAGS: -D_WIN32_WINNT=0x0601
 #cgo linux LDFLAGS: -ldl -lpthread
 #cgo windows LDFLAGS: -lwinhttp -lbcrypt -lws2_32 -ladvapi32
 #include <stdlib.h>

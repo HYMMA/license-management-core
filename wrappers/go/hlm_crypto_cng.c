@@ -12,12 +12,27 @@
 
 #include "hymma/hlm.h"
 #include "hlm_ed25519.h"
+#include "hlm_sha256.h"
 
 #pragma comment(lib, "bcrypt.lib")
 
 #ifndef NT_SUCCESS
 #define NT_SUCCESS(s) (((NTSTATUS)(s)) >= 0)
 #endif
+
+/* SHA-256 of msg via CNG (keeps this backend self-contained). */
+static NTSTATUS cng_sha256(const uint8_t *msg, size_t msg_len,
+                           UCHAR out[HLM_SHA256_DIGEST_SIZE])
+{
+    BCRYPT_ALG_HANDLE halg = NULL;
+    NTSTATUS st = BCryptOpenAlgorithmProvider(&halg, BCRYPT_SHA256_ALGORITHM,
+                                              NULL, 0);
+    if (!NT_SUCCESS(st)) return st;
+    st = BCryptHash(halg, NULL, 0, (PUCHAR)msg, (ULONG)msg_len, out,
+                    HLM_SHA256_DIGEST_SIZE);
+    BCryptCloseAlgorithmProvider(halg, 0);
+    return st;
+}
 
 static int cng_verify_rsa(const hlm_public_key *key,
                           const uint8_t *msg, size_t msg_len,
@@ -27,7 +42,7 @@ static int cng_verify_rsa(const hlm_public_key *key,
     BCRYPT_KEY_HANDLE hkey = NULL;
     NTSTATUS st;
     int result = 0;
-    UCHAR hash[32];
+    UCHAR hash[HLM_SHA256_DIGEST_SIZE];
     DWORD hash_len = 0;
     BCRYPT_PKCS1_PADDING_INFO pad;
     UCHAR blob[8192];
@@ -57,16 +72,9 @@ static int cng_verify_rsa(const hlm_public_key *key,
                              blob, (ULONG)blob_len, 0);
     if (!NT_SUCCESS(st)) goto done;
 
-    /* SHA-256 of msg via CNG too (keeps this backend self-contained). */
-    {
-        BCRYPT_ALG_HANDLE halg = NULL;
-        st = BCryptOpenAlgorithmProvider(&halg, BCRYPT_SHA256_ALGORITHM, NULL, 0);
-        if (!NT_SUCCESS(st)) goto done;
-        st = BCryptHash(halg, NULL, 0, (PUCHAR)msg, (ULONG)msg_len, hash, 32);
-        BCryptCloseAlgorithmProvider(halg, 0);
-        if (!NT_SUCCESS(st)) goto done;
-        hash_len = 32;
-    }
+    st = cng_sha256(msg, msg_len, hash);
+    if (!NT_SUCCESS(st)) goto done;
+    hash_len = HLM_SHA256_DIGEST_SIZE;
 
     pad.pszAlgId = BCRYPT_SHA256_ALGORITHM;
     st = BCryptVerifySignature(hkey, &pad, hash, hash_len,
@@ -87,7 +95,7 @@ static int cng_verify_ecdsa(const hlm_public_key *key,
     BCRYPT_KEY_HANDLE hkey = NULL;
     NTSTATUS st;
     int result = 0;
-    UCHAR hash[32];
+    UCHAR hash[HLM_SHA256_DIGEST_SIZE];
     UCHAR blob[sizeof(BCRYPT_ECCKEY_BLOB) + 64];
     BCRYPT_ECCKEY_BLOB hdr;
 
@@ -105,17 +113,11 @@ static int cng_verify_ecdsa(const hlm_public_key *key,
                              blob, sizeof(blob), 0);
     if (!NT_SUCCESS(st)) goto done;
 
-    {
-        BCRYPT_ALG_HANDLE halg = NULL;
-        st = BCryptOpenAlgorithmProvider(&halg, BCRYPT_SHA256_ALGORITHM, NULL, 0);
-        if (!NT_SUCCESS(st)) goto done;
-        st = BCryptHash(halg, NULL, 0, (PUCHAR)msg, (ULONG)msg_len, hash, 32);
-        BCryptCloseAlgorithmProvider(halg, 0);
-        if (!NT_SUCCESS(st)) goto done;
-    }
+    st = cng_sha256(msg, msg_len, hash);
+    if (!NT_SUCCESS(st)) goto done;
 
     /* CNG takes the raw r||s layout — exactly the JWS ES256 signature. */
-    st = BCryptVerifySignature(hkey, NULL, hash, 32,
+    st = BCryptVerifySignature(hkey, NULL, hash, HLM_SHA256_DIGEST_SIZE,
                                (PUCHAR)sig, (ULONG)sig_len, 0);
     result = NT_SUCCESS(st) ? 1 : 0;
 

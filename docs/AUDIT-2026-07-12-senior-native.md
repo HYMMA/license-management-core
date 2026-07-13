@@ -8,6 +8,25 @@
 
 ---
 
+## Remediation status — 2026-07-13
+
+All High and Medium findings, and all actionable Lows, were fixed in the
+commit series following `67eef6f` (one commit per subsystem: Ed25519 UB,
+RSA hardening, untrusted-input parsers, trusted time, concurrency, ports,
+ABI lockdown, wrappers, performance, clean-code/CI). Notes:
+
+- **M7** is implemented as a monotonic trusted-time floor (timesync/server
+  time/verified-license `created`/`updated`) that the local-clock fallback
+  can never evaluate below, rather than a hard deny.
+- **H3/L6**: the `HLM_NTP_HOST` / `HLM_TIMESYNC=off` overrides now exist
+  only in builds compiled with `-DHLM_DEV_TIMESYNC_ENV`.
+- Deliberately **not** taken: the large function-splitting refactors
+  (`hlm_json_parse`, `hlm_license_parse`, `winhttp_send`, `hlm_ffi_create`
+  + an opts-struct create variant), the tokenizer error-code enum, and
+  `const gf q[4]` in `point_add` (C has no implicit `T(*)[N]` →
+  `const T(*)[N]` conversion, so the "fix" would introduce warnings at
+  every call site). These are cosmetic and can be follow-ups.
+
 ## Run status — complete (all 8 lenses)
 
 The first run (2026-07-12) completed the **undefined-behavior** and **security-review** lenses before a session limit interrupted it; the remaining six lenses were re-run on 2026-07-13 and are now folded in below. All eight lenses have reported.

@@ -7,7 +7,7 @@
 int main(void)
 {
 #if defined(_WIN32)
-    char id[64], name[128];
+    char id[HLM_MAX_MACHINE_ID], name[HLM_MAX_NAME];
     int r = hlm_machine_id_win(id, sizeof(id));
     if (r != HLM_OK) {
         printf("machine id unavailable: %s\n", hlm_err_str(r));

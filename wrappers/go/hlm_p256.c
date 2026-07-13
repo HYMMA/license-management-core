@@ -195,16 +195,23 @@ static void jp_scalar_mul(const p256_ctx *c, jpoint *r, const hlm_bn *k,
     *r = acc;
 }
 
+/* out = a^-1 mod m for prime m, via Fermat: a^(m-2) mod m. */
+static void bn_mod_inverse_fermat(hlm_bn *out, const hlm_bn *a, const hlm_bn *m)
+{
+    hlm_bn mm2, two;
+    hlm_bn_from_u32(&two, 2);
+    hlm_bn_sub(&mm2, m, &two);
+    hlm_bn_modexp(out, a, &mm2, m);
+}
+
 /* x_affine = X / Z^2 mod p (via Fermat inverse). Returns 0 for infinity. */
 static int jp_affine_x(const p256_ctx *c, hlm_bn *out, const jpoint *a)
 {
-    hlm_bn zinv, zinv2, pm2, two;
+    hlm_bn zinv, zinv2;
 
     if (jp_is_infinity(a)) return 0;
 
-    hlm_bn_from_u32(&two, 2);
-    hlm_bn_sub(&pm2, &c->p, &two);                      /* p - 2 */
-    hlm_bn_modexp(&zinv, &a->z, &pm2, &c->p);           /* Z^-1 */
+    bn_mod_inverse_fermat(&zinv, &a->z, &c->p);         /* Z^-1 */
     hlm_bn_modmul(&zinv2, &zinv, &zinv, &c->p);         /* Z^-2 */
     hlm_bn_modmul(out, &a->x, &zinv2, &c->p);
     return 1;
@@ -232,7 +239,7 @@ int hlm_p256_ecdsa_sha256_verify(const uint8_t qx[32], const uint8_t qy[32],
                                  const uint8_t sig[64])
 {
     p256_ctx c;
-    hlm_bn x, y, r, s, e, w, u1, u2, nm2, two, v;
+    hlm_bn x, y, r, s, e, w, u1, u2, v;
     jpoint q, g, p1, p2, sum;
     uint8_t digest[HLM_SHA256_DIGEST_SIZE];
 
@@ -258,9 +265,7 @@ int hlm_p256_ecdsa_sha256_verify(const uint8_t qx[32], const uint8_t qy[32],
     hlm_bn_mod(&e, &e, &c.n);
 
     /* w = s^-1 mod n (Fermat: n is prime) */
-    hlm_bn_from_u32(&two, 2);
-    hlm_bn_sub(&nm2, &c.n, &two);
-    hlm_bn_modexp(&w, &s, &nm2, &c.n);
+    bn_mod_inverse_fermat(&w, &s, &c.n);
 
     hlm_bn_modmul(&u1, &e, &w, &c.n);
     hlm_bn_modmul(&u2, &r, &w, &c.n);

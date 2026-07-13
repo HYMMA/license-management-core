@@ -124,6 +124,9 @@ int hlm_jwk_parse(const char *jwk_json, size_t len,
 #ifndef HLM_MAX_CODE
 #define HLM_MAX_CODE 128
 #endif
+#ifndef HLM_MAX_ERROR_DETAIL
+#define HLM_MAX_ERROR_DETAIL 256
+#endif
 #ifndef HLM_MAX_METADATA
 #define HLM_MAX_METADATA 8
 #endif
@@ -393,7 +396,7 @@ typedef struct {
     hlm_status status;
     int has_license;
     int last_http_status;
-    char last_error[256];      /* server's human-readable refusal detail ("" if none) */
+    char last_error[HLM_MAX_ERROR_DETAIL]; /* server's refusal detail ("" if none) */
     int64_t eval_now;          /* trusted evaluation time of the last call */
     int64_t time_floor;        /* highest trusted time observed; the local-
                                   clock fallback never evaluates below it */

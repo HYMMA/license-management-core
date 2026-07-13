@@ -36,7 +36,8 @@ static const uint64_t K[80] = {
 
 #define ROTR(x, n) (((x) >> (n)) | ((x) << (64 - (n))))
 
-static void compress(hlm_sha512_ctx *c, const uint8_t block[128])
+static void sha512_compress(hlm_sha512_ctx *c,
+                            const uint8_t block[HLM_SHA512_BLOCK_SIZE])
 {
     uint64_t w[80];
     uint64_t a, b, d, e, f, g, h, t1, t2, s0, s1, ch, maj;
@@ -101,21 +102,21 @@ void hlm_sha512_update(hlm_sha512_ctx *c, const void *data, size_t len)
     c->bitlen_hi += (uint64_t)len >> 61;
 
     if (c->buf_len > 0) {
-        size_t take = 128 - c->buf_len;
+        size_t take = HLM_SHA512_BLOCK_SIZE - c->buf_len;
         if (take > len) take = len;
         memcpy(c->buf + c->buf_len, p, take);
         c->buf_len += take;
         p += take;
         len -= take;
-        if (c->buf_len == 128) {
-            compress(c, c->buf);
+        if (c->buf_len == HLM_SHA512_BLOCK_SIZE) {
+            sha512_compress(c, c->buf);
             c->buf_len = 0;
         }
     }
-    while (len >= 128) {
-        compress(c, p);
-        p += 128;
-        len -= 128;
+    while (len >= HLM_SHA512_BLOCK_SIZE) {
+        sha512_compress(c, p);
+        p += HLM_SHA512_BLOCK_SIZE;
+        len -= HLM_SHA512_BLOCK_SIZE;
     }
     if (len > 0) {
         memcpy(c->buf, p, len);
@@ -123,7 +124,7 @@ void hlm_sha512_update(hlm_sha512_ctx *c, const void *data, size_t len)
     }
 }
 
-void hlm_sha512_final(hlm_sha512_ctx *c, uint8_t out[64])
+void hlm_sha512_final(hlm_sha512_ctx *c, uint8_t out[HLM_SHA512_DIGEST_SIZE])
 {
     uint64_t hi = c->bitlen_hi, lo = c->bitlen_lo;
     uint8_t pad = 0x80;
@@ -132,14 +133,14 @@ void hlm_sha512_final(hlm_sha512_ctx *c, uint8_t out[64])
     int i;
 
     hlm_sha512_update(c, &pad, 1);
-    while (c->buf_len != 112)
+    while (c->buf_len != HLM_SHA512_BLOCK_SIZE - 16) /* length field: 16 B */
         hlm_sha512_update(c, &zero, 1);
 
     for (i = 0; i < 8; i++) lenb[i] = (uint8_t)(hi >> (56 - i * 8));
     for (i = 0; i < 8; i++) lenb[8 + i] = (uint8_t)(lo >> (56 - i * 8));
     /* bypass the length counter for the length block itself */
     memcpy(c->buf + c->buf_len, lenb, 16);
-    compress(c, c->buf);
+    sha512_compress(c, c->buf);
 
     for (i = 0; i < 8; i++) {
         out[i * 8] = (uint8_t)(c->state[i] >> 56);
@@ -153,7 +154,8 @@ void hlm_sha512_final(hlm_sha512_ctx *c, uint8_t out[64])
     }
 }
 
-void hlm_sha512(const void *data, size_t len, uint8_t out[64])
+void hlm_sha512(const void *data, size_t len,
+                uint8_t out[HLM_SHA512_DIGEST_SIZE])
 {
     hlm_sha512_ctx c;
     hlm_sha512_init(&c);
