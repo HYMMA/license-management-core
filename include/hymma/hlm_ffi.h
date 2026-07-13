@@ -17,10 +17,21 @@
 
 #include <stdint.h>
 
-#if defined(_WIN32) && defined(HLM_FFI_BUILD_DLL)
-#define HLM_API __declspec(dllexport)
+/* Export annotation for the shared library. The CMake shared target
+ * defines HLM_FFI_BUILD_DLL and compiles with hidden visibility, so ONLY
+ * the hlm_ffi_* surface below is public ABI; internal helpers (hlm_bn_*,
+ * hlm_sha256_*, JSON, ...) stay private. Static/embedded builds get no
+ * annotation. */
+#if defined(HLM_FFI_BUILD_DLL)
+#  if defined(_WIN32)
+#    define HLM_API __declspec(dllexport)
+#  elif defined(__GNUC__)
+#    define HLM_API __attribute__((visibility("default")))
+#  else
+#    define HLM_API
+#  endif
 #else
-#define HLM_API
+#  define HLM_API
 #endif
 
 #ifdef __cplusplus

@@ -71,8 +71,10 @@ jobs:
           mkdir -p dist/include
           cp -r include/hymma dist/include/
           cp LICENSE README.md dist/
+          # hymmalm.lib is the DLL import library; hymmalm_static.lib the static lib
           find build -maxdepth 2 \( -name 'hymmalm.dll' -o -name 'libhymmalm.so' \
-            -o -name 'libhymmalm.dylib' -o -name 'libhymmalm.a' -o -name 'hymmalm.lib' \) \
+            -o -name 'libhymmalm.dylib' -o -name 'libhymmalm.a' -o -name 'hymmalm.lib' \
+            -o -name 'hymmalm_static.lib' \) \
             -exec cp {} dist/ \;
 
       - uses: actions/upload-artifact@v4

@@ -20,6 +20,16 @@
  */
 #if !defined(_WIN32)
 
+/* Feature-test macros must precede every system include: the port needs
+ * POSIX.1-2008 (nanosleep, getaddrinfo, gethostname, strncasecmp) and
+ * builds under strict -std=c99, not just gnu99. */
+#if !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE 1 /* gethostuuid and BSD socket details */
+#endif
+
 #include <dlfcn.h>
 #include <errno.h>
 #include <netdb.h>
@@ -27,6 +37,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
