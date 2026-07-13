@@ -59,9 +59,20 @@ static int parse_jwks(const char *jwks_json, hlm_public_key *keys,
         r = hlm_jwk_parse(span, span_len, &keys[count], cursor,
                           (size_t)(keybuf + keybuf_len - cursor));
         if (r != HLM_OK) return r;
-        /* advance cursor past what this key consumed: worst-case RSA-4096 */
-        cursor += 528;
-        if (cursor >= keybuf + keybuf_len) break;
+        /* advance by the bytes this key actually decoded into the buffer
+         * (hlm_jwk_parse bounds every decode, so cursor never passes the
+         * end of keybuf and keys never overlap) */
+        switch (keys[count].alg) {
+        case HLM_ALG_RS256:
+            cursor += keys[count].u.rsa.n_len + keys[count].u.rsa.e_len;
+            break;
+        case HLM_ALG_ES256:
+            cursor += 64; /* x || y, 32 bytes each */
+            break;
+        default: /* HLM_ALG_EDDSA */
+            cursor += 32;
+            break;
+        }
     }
 
     if (count == 0) return HLM_E_FORMAT;
@@ -289,6 +300,7 @@ HLM_API const char *hlm_ffi_err_name(int err)
 
 HLM_API int hlm_ffi_machine_id(char *out, int cap)
 {
+    if (out == NULL || cap <= 0) return HLM_E_ARG;
 #if defined(_WIN32)
     return hlm_machine_id_win(out, (size_t)cap);
 #else
@@ -298,6 +310,7 @@ HLM_API int hlm_ffi_machine_id(char *out, int cap)
 
 HLM_API int hlm_ffi_machine_name(char *out, int cap)
 {
+    if (out == NULL || cap <= 0) return HLM_E_ARG;
 #if defined(_WIN32)
     return hlm_machine_name_win(out, (size_t)cap);
 #else

@@ -18,6 +18,7 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <intrin.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -341,6 +342,7 @@ static const char *smbios_string(const BYTE *strings, const BYTE *end, int index
     if (index <= 0) return NULL;
     for (i = 1; p < end; i++) {
         size_t len = strnlen((const char *)p, (size_t)(end - p));
+        if (len == (size_t)(end - p)) return NULL; /* no NUL before end */
         if (len == 0) return NULL; /* end of string-set */
         if (i == index) return (const char *)p;
         p += len + 1;
@@ -358,7 +360,8 @@ static int smbios_baseboard_serial(char *out, size_t out_len)
     int found = 0;
 
     size = GetSystemFirmwareTable('RSMB', 0, NULL, 0);
-    if (size == 0 || size > 1024 * 1024) return -1;
+    if (size <= offsetof(raw_smbios, SMBIOSTableData) || size > 1024 * 1024)
+        return -1;
     buf = (BYTE *)HeapAlloc(GetProcessHeap(), 0, size);
     if (buf == NULL) return -1;
     if (GetSystemFirmwareTable('RSMB', 0, buf, size) != size) {
@@ -368,18 +371,25 @@ static int smbios_baseboard_serial(char *out, size_t out_len)
 
     smb = (raw_smbios *)buf;
     p = smb->SMBIOSTableData;
-    end = p + smb->Length;
+    {
+        /* never trust the firmware-reported Length past the allocation */
+        size_t cap = size - offsetof(raw_smbios, SMBIOSTableData);
+        end = p + (smb->Length <= cap ? smb->Length : cap);
+    }
 
     while (p + 4 <= end) {
         BYTE type = p[0];
         BYTE len = p[1];
-        const BYTE *strings = p + len;
-        const BYTE *q = strings;
+        const BYTE *strings;
+        const BYTE *q;
 
-        if (len < 4) break;
+        if (len < 4 || len > (size_t)(end - p)) break;
+        strings = p + len;
+        q = strings;
 
         /* find the end of this structure's string-set (double NUL) */
         while (q + 1 < end && !(q[0] == 0 && q[1] == 0)) q++;
+        if (q + 1 >= end) break; /* truncated table: no terminator */
         q += 2;
 
         if (type == 2 && len > 0x07) {

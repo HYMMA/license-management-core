@@ -1,5 +1,6 @@
 #include "hlm_json.h"
 
+#include <limits.h>
 #include <string.h>
 
 /* ---------- tokenizer ---------- */
@@ -102,6 +103,8 @@ int hlm_json_parse(const char *src, size_t len, hlm_json_tok *toks, int max_toks
 {
     parser_state p;
     int depth = 0;
+
+    if (len > (size_t)INT_MAX) return -2; /* token offsets are int */
 
     p.src = src;
     p.len = len;

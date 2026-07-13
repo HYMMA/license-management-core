@@ -386,6 +386,7 @@ int hlm_machine_id_posix(char *out, size_t out_len)
 
 int hlm_machine_name_posix(char *out, size_t out_len)
 {
+    if (out == NULL || out_len == 0) return HLM_E_ARG;
     if (gethostname(out, out_len) != 0) return HLM_E_ARG;
     out[out_len - 1] = '\0';
     return HLM_OK;
