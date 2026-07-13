@@ -379,6 +379,8 @@ typedef struct {
     int last_http_status;
     char last_error[256];      /* server's human-readable refusal detail ("" if none) */
     int64_t eval_now;          /* trusted evaluation time of the last call */
+    int64_t time_floor;        /* highest trusted time observed; the local-
+                                  clock fallback never evaluates below it */
     char buf[HLM_CLIENT_BUF];
     char resp[HLM_CLIENT_BUF];
 } hlm_client;

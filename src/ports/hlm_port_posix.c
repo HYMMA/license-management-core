@@ -11,8 +11,9 @@
  * the same SHA-256 → Crockford-Base32 pipeline as the Windows/.NET SDK path.
  * (The raw id never leaves the machine; only the hash does.)
  *
- * Trusted time: SNTP to pool.ntp.org (override with HLM_NTP_HOST, disable
- * with HLM_TIMESYNC=off); the local clock is trusted only when it agrees
+ * Trusted time: SNTP to pool.ntp.org (dev builds compiled with
+ * -DHLM_DEV_TIMESYNC_ENV may override via HLM_NTP_HOST / HLM_TIMESYNC=off;
+ * release builds ignore both); the local clock is trusted only when it agrees
  * with the NTP answer within 1h — the same drift rule as the Windows port
  * and the .NET SDK's TimeSyncDiagnostic. On failure the client falls back
  * to GET DateTime, then the local clock.
@@ -285,7 +286,11 @@ static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
         uint32_t secs = ((uint32_t)pkt[40] << 24) | ((uint32_t)pkt[41] << 16) |
                         ((uint32_t)pkt[42] << 8) | (uint32_t)pkt[43];
         if (secs == 0) goto done;
-        *epoch_out = (int64_t)secs - 2208988800LL;
+        /* NTP era pivot: era-0 timestamps have the top bit set from 1968
+         * through Feb-2036; a clear top bit means era 1 — add 2^32 s so
+         * trusted time keeps working past the rollover. */
+        *epoch_out = (int64_t)secs +
+                     ((secs & 0x80000000u) ? 0 : 4294967296LL) - 2208988800LL;
         result = 0;
     }
 
@@ -297,17 +302,31 @@ done:
 
 static int timesync_posix_now(void *user, int64_t *now_utc)
 {
-    const char *mode = getenv("HLM_TIMESYNC");
-    const char *host = getenv("HLM_NTP_HOST");
+    char host[256] = "pool.ntp.org";
     int64_t ntp_time;
 
     (void)user;
 
-    if (mode != NULL && strcmp(mode, "off") == 0)
-        return HLM_E_HTTP; /* caller falls back to GET DateTime, then local */
+#if defined(HLM_DEV_TIMESYNC_ENV)
+    /* Dev/test hooks, compiled out of release builds: honoring these in
+     * production would let an end user point trusted time at their own
+     * (unauthenticated UDP) SNTP server, or disable it outright, and
+     * resurrect expired licenses. */
+    {
+        const char *mode = getenv("HLM_TIMESYNC");
+        const char *h = getenv("HLM_NTP_HOST");
+        if (mode != NULL && strcmp(mode, "off") == 0)
+            return HLM_E_HTTP; /* caller falls back to GET DateTime, then local */
+        if (h != NULL && h[0] != '\0') {
+            /* copy immediately: getenv's pointer can dangle if the host
+             * app calls setenv/putenv on another thread */
+            strncpy(host, h, sizeof(host) - 1);
+            host[sizeof(host) - 1] = '\0';
+        }
+    }
+#endif
 
-    if (sntp_query(host != NULL ? host : "pool.ntp.org", HLM_NTP_TIMEOUT_MS,
-                   &ntp_time) == 0) {
+    if (sntp_query(host, HLM_NTP_TIMEOUT_MS, &ntp_time) == 0) {
         int64_t local = (int64_t)time(NULL);
         int64_t drift = local - ntp_time;
         if (drift < 0) drift = -drift;

@@ -228,8 +228,12 @@ static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
         uint32_t secs = ((uint32_t)pkt[40] << 24) | ((uint32_t)pkt[41] << 16) |
                         ((uint32_t)pkt[42] << 8) | (uint32_t)pkt[43];
         if (secs == 0) goto done;
-        /* 2208988800 = seconds between 1900-01-01 and 1970-01-01 */
-        *epoch_out = (int64_t)secs - 2208988800LL;
+        /* 2208988800 = seconds between 1900-01-01 and 1970-01-01.
+         * NTP era pivot: era-0 timestamps have the top bit set from 1968
+         * through Feb-2036; a clear top bit means era 1 — add 2^32 s so
+         * trusted time keeps working past the rollover. */
+        *epoch_out = (int64_t)secs +
+                     ((secs & 0x80000000u) ? 0 : 4294967296LL) - 2208988800LL;
         result = 0;
     }
 

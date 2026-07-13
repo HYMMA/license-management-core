@@ -247,23 +247,30 @@ static int fetch_server_time(hlm_client *c, int64_t *now_out)
     return hlm_parse_iso8601(s, len, now_out) == 0 ? HLM_OK : HLM_E_FORMAT;
 }
 
-/* One trusted evaluation time per public call: timesync -> API -> local. */
+/* One trusted evaluation time per public call: timesync -> API -> local.
+ * The local clock is the last resort and is clamped to time_floor — the
+ * highest trusted time this handle has observed (timesync, server time, or
+ * a verified license's server-signed timestamps) — so winding the clock
+ * back cannot resurrect an expired license. */
 static void resolve_now(hlm_client *c)
 {
     int64_t t;
 
     if (c->cfg.timesync.now != NULL) {
-        if (c->cfg.timesync.now(c->cfg.timesync.user, &t) == HLM_OK) {
-            c->eval_now = t;
-            return;
-        }
+        if (c->cfg.timesync.now(c->cfg.timesync.user, &t) == HLM_OK)
+            goto trusted;
         /* timesync configured but unavailable: ask the server */
-        if (c->cfg.http.send != NULL && fetch_server_time(c, &t) == HLM_OK) {
-            c->eval_now = t;
-            return;
-        }
+        if (c->cfg.http.send != NULL && fetch_server_time(c, &t) == HLM_OK)
+            goto trusted;
     }
-    c->eval_now = c->cfg.clock.now(c->cfg.clock.user);
+    t = c->cfg.clock.now(c->cfg.clock.user);
+    if (t < c->time_floor) t = c->time_floor;
+    c->eval_now = t;
+    return;
+
+trusted:
+    if (t > c->time_floor) c->time_floor = t;
+    c->eval_now = t;
 }
 
 /* ------------------------------------------------------------------ */
@@ -299,6 +306,19 @@ static int adopt_license(hlm_client *c, const char *jws, size_t len)
                               &c->cfg.crypto, c->cfg.product_id,
                               c->cfg.machine_id, c->eval_now, &lic, &status);
     if (r != HLM_OK) return r;
+
+    /* The verified license carries server-signed timestamps; real time can
+     * never be earlier than them. Raise the floor, and if the evaluation
+     * time (local-clock fallback) sits below it the clock was rolled back —
+     * re-evaluate at the floor. */
+    if (lic.created != HLM_TIME_NONE && lic.created > c->time_floor)
+        c->time_floor = lic.created;
+    if (lic.updated != HLM_TIME_NONE && lic.updated > c->time_floor)
+        c->time_floor = lic.updated;
+    if (c->eval_now < c->time_floor) {
+        c->eval_now = c->time_floor;
+        status = hlm_license_status(&lic, c->eval_now);
+    }
 
     c->license = lic;
     c->status = status;
