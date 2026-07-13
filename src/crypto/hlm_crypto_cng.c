@@ -20,16 +20,24 @@
 #define NT_SUCCESS(s) (((NTSTATUS)(s)) >= 0)
 #endif
 
-/* SHA-256 of msg via CNG (keeps this backend self-contained). */
+/* SHA-256 of msg via CNG (keeps this backend self-contained). Uses the
+ * create/hash/finish sequence rather than the one-shot BCryptHash: the
+ * mingw-w64 bcrypt.h that cgo builds against does not declare it. */
 static NTSTATUS cng_sha256(const uint8_t *msg, size_t msg_len,
                            UCHAR out[HLM_SHA256_DIGEST_SIZE])
 {
     BCRYPT_ALG_HANDLE halg = NULL;
+    BCRYPT_HASH_HANDLE hh = NULL;
     NTSTATUS st = BCryptOpenAlgorithmProvider(&halg, BCRYPT_SHA256_ALGORITHM,
                                               NULL, 0);
     if (!NT_SUCCESS(st)) return st;
-    st = BCryptHash(halg, NULL, 0, (PUCHAR)msg, (ULONG)msg_len, out,
-                    HLM_SHA256_DIGEST_SIZE);
+    st = BCryptCreateHash(halg, &hh, NULL, 0, NULL, 0, 0);
+    if (NT_SUCCESS(st)) {
+        st = BCryptHashData(hh, (PUCHAR)msg, (ULONG)msg_len, 0);
+        if (NT_SUCCESS(st))
+            st = BCryptFinishHash(hh, out, HLM_SHA256_DIGEST_SIZE, 0);
+        BCryptDestroyHash(hh);
+    }
     BCryptCloseAlgorithmProvider(halg, 0);
     return st;
 }

@@ -385,6 +385,10 @@ hlm_timesync hlm_timesync_win(void)
 /* Machine identity                                                    */
 /* ------------------------------------------------------------------ */
 
+/* GetSystemFirmwareTable provider signature 'RSMB' spelled out — the
+ * multi-char constant draws -Wmultichar under the mingw cgo build. */
+#define HLM_FIRMWARE_RSMB 0x52534D42u
+
 /* SMBIOS raw table layout per the RSMB firmware table. */
 typedef struct {
     BYTE Used20CallingMethod;
@@ -421,12 +425,13 @@ static int smbios_baseboard_serial(char *out, size_t out_len)
     const BYTE *p, *end;
     int found = 0;
 
-    size = GetSystemFirmwareTable('RSMB', 0, NULL, 0);
+    size = GetSystemFirmwareTable(HLM_FIRMWARE_RSMB, 0, NULL, 0);
     if (size <= offsetof(raw_smbios, SMBIOSTableData) || size > 1024 * 1024)
         return -1;
     buf = (BYTE *)HeapAlloc(GetProcessHeap(), 0, size);
     if (buf == NULL) return -1;
-    if (GetSystemFirmwareTable('RSMB', 0, buf, size) != size) goto done;
+    if (GetSystemFirmwareTable(HLM_FIRMWARE_RSMB, 0, buf, size) != size)
+        goto done;
 
     smb = (raw_smbios *)buf;
     p = smb->SMBIOSTableData;
