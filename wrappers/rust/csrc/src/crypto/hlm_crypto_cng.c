@@ -6,6 +6,8 @@
 
 #include <windows.h>
 #include <bcrypt.h>
+#include <limits.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "hymma/hlm.h"
@@ -124,6 +126,10 @@ static int cng_verify(void *user, const hlm_public_key *key,
                       const uint8_t *sig, size_t sig_len)
 {
     (void)user;
+#if SIZE_MAX > ULONG_MAX
+    /* every CNG length parameter is a ULONG; refuse instead of truncating */
+    if (msg_len > ULONG_MAX || sig_len > ULONG_MAX) return 0;
+#endif
     switch (key->alg) {
     case HLM_ALG_RS256:
         return cng_verify_rsa(key, msg, msg_len, sig, sig_len);
