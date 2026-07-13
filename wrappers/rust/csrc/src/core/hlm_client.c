@@ -66,13 +66,12 @@ static size_t json_escape(const char *in, char *out, size_t cap)
 static void make_correlation_id(hlm_client *c, char out[33])
 {
     static const char HEX[] = "0123456789abcdef";
-    static uint32_t counter;
     uint64_t seed;
     int i;
 
-    counter += 0x9e3779b9u;
+    c->corr_counter += 0x9e3779b9u;
     seed = (uint64_t)(c->cfg.clock.now ? c->cfg.clock.now(c->cfg.clock.user) : 0);
-    seed = seed * 6364136223846793005ULL + counter;
+    seed = seed * 6364136223846793005ULL + c->corr_counter;
 
     for (i = 0; i < 32; i++) {
         seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;

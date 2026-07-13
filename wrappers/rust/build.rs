@@ -58,8 +58,10 @@ fn main() {
         println!("cargo:rustc-link-lib=ws2_32");
         println!("cargo:rustc-link-lib=advapi32");
     } else if target_os == "linux" {
-        // The POSIX port dlopen()s libcurl at runtime.
+        // The POSIX port dlopen()s libcurl at runtime; pthread_once guards
+        // its one-time bring-up (a no-op link on glibc >= 2.34).
         println!("cargo:rustc-link-lib=dl");
+        println!("cargo:rustc-link-lib=pthread");
     }
 
     println!("cargo:rerun-if-changed={}", root.join("src").display());

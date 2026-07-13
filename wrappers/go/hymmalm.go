@@ -33,7 +33,7 @@ package hymmalm
 // no prebuilt library, no include paths outside the module.
 
 #cgo CFLAGS: -I${SRCDIR}/include
-#cgo linux LDFLAGS: -ldl
+#cgo linux LDFLAGS: -ldl -lpthread
 #cgo windows LDFLAGS: -lwinhttp -lbcrypt -lws2_32 -ladvapi32
 #include <stdlib.h>
 #include "hymma/hlm_ffi.h"

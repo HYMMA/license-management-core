@@ -21,7 +21,9 @@
 #if !defined(_WIN32)
 
 #include <dlfcn.h>
+#include <errno.h>
 #include <netdb.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,22 +72,22 @@ typedef struct {
     void (*slist_free_all)(hlm_curl_slist *);
 } curl_api;
 
-static curl_api g_curl; /* resolved once, then reused */
+static curl_api g_curl; /* filled exactly once, under g_curl_once */
+static pthread_once_t g_curl_once = PTHREAD_ONCE_INIT;
 
-static int curl_load(void)
+static void curl_load_once(void)
 {
     static const char *const NAMES[] = {
         "libcurl.so.4", "libcurl.so", "libcurl-gnutls.so.4",
         "libcurl.4.dylib", "libcurl.dylib"
     };
+    int (*global_init)(long) = NULL;
     size_t i;
     void *h = NULL;
 
-    if (g_curl.handle != NULL) return 0;
-
     for (i = 0; i < sizeof(NAMES) / sizeof(NAMES[0]) && h == NULL; i++)
         h = dlopen(NAMES[i], RTLD_NOW | RTLD_GLOBAL);
-    if (h == NULL) return -1;
+    if (h == NULL) return;
 
     *(void **)&g_curl.easy_init = dlsym(h, "curl_easy_init");
     *(void **)&g_curl.easy_setopt = dlsym(h, "curl_easy_setopt");
@@ -94,17 +96,34 @@ static int curl_load(void)
     *(void **)&g_curl.easy_getinfo = dlsym(h, "curl_easy_getinfo");
     *(void **)&g_curl.slist_append = dlsym(h, "curl_slist_append");
     *(void **)&g_curl.slist_free_all = dlsym(h, "curl_slist_free_all");
+    *(void **)&global_init = dlsym(h, "curl_global_init");
 
     if (g_curl.easy_init == NULL || g_curl.easy_setopt == NULL ||
         g_curl.easy_perform == NULL || g_curl.easy_cleanup == NULL ||
         g_curl.easy_getinfo == NULL || g_curl.slist_append == NULL ||
-        g_curl.slist_free_all == NULL) {
+        g_curl.slist_free_all == NULL || global_init == NULL) {
         dlclose(h);
         memset(&g_curl, 0, sizeof(g_curl));
-        return -1;
+        return;
     }
-    g_curl.handle = h;
-    return 0;
+
+    /* libcurl's global init is not thread-safe (it may lazily bring up the
+     * TLS backend); run it exactly once before any easy handle exists.
+     * CURL_GLOBAL_DEFAULT == CURL_GLOBAL_SSL | CURL_GLOBAL_WIN32 == 3. */
+    if (global_init(3L) != 0) {
+        dlclose(h);
+        memset(&g_curl, 0, sizeof(g_curl));
+        return;
+    }
+    g_curl.handle = h; /* publish last */
+}
+
+/* Thread-safe: concurrent first users synchronize on pthread_once instead
+ * of racing a bare global (duplicate dlopen / torn function pointers). */
+static int curl_load(void)
+{
+    pthread_once(&g_curl_once, curl_load_once);
+    return g_curl.handle != NULL ? 0 : -1;
 }
 
 typedef struct {
@@ -230,11 +249,14 @@ hlm_http hlm_http_curl(void)
 
 static void sleep_posix(void *user, unsigned ms)
 {
-    struct timespec ts;
+    struct timespec ts, rem;
     (void)user;
     ts.tv_sec = ms / 1000;
     ts.tv_nsec = (long)(ms % 1000) * 1000000L;
-    nanosleep(&ts, NULL);
+    /* retry on EINTR: host runtimes (Go preemption, JVM) signal freely and
+     * would otherwise truncate the retry/backoff wait */
+    while (nanosleep(&ts, &rem) == -1 && errno == EINTR)
+        ts = rem;
 }
 
 hlm_sleep hlm_sleep_posix(void)

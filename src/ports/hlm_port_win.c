@@ -188,17 +188,32 @@ hlm_sleep hlm_sleep_win(void)
 /* Trusted time (clock-tamper resistance)                              */
 /* ------------------------------------------------------------------ */
 
+/* One process-wide WSAStartup at first use: per-query startup/cleanup
+ * churns the global Winsock refcount and is fragile next to a host app
+ * managing Winsock itself. The matching WSACleanup is intentionally
+ * omitted — the OS reclaims it at process exit. */
+static INIT_ONCE g_wsa_once = INIT_ONCE_STATIC_INIT;
+static int g_wsa_ok = 0;
+
+static BOOL CALLBACK wsa_init_once(PINIT_ONCE once, PVOID param, PVOID *ctx)
+{
+    WSADATA wsa;
+    (void)once; (void)param; (void)ctx;
+    g_wsa_ok = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+    return TRUE;
+}
+
 /* Minimal SNTP client (RFC 4330): 48-byte packet, LI=0 VN=3 Mode=3,
  * transmit timestamp at bytes 40-47, epoch 1900-01-01. */
 static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
 {
-    WSADATA wsa;
     struct addrinfo hints, *ai = NULL;
     SOCKET sock = INVALID_SOCKET;
     uint8_t pkt[48];
     int result = -1;
 
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return -1;
+    InitOnceExecuteOnce(&g_wsa_once, wsa_init_once, NULL, NULL);
+    if (!g_wsa_ok) return -1;
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -240,7 +255,6 @@ static int sntp_query(const char *host, int timeout_ms, int64_t *epoch_out)
 done:
     if (sock != INVALID_SOCKET) closesocket(sock);
     if (ai != NULL) freeaddrinfo(ai);
-    WSACleanup();
     return result;
 }
 

@@ -381,6 +381,7 @@ typedef struct {
     int64_t eval_now;          /* trusted evaluation time of the last call */
     int64_t time_floor;        /* highest trusted time observed; the local-
                                   clock fallback never evaluates below it */
+    uint32_t corr_counter;     /* per-handle correlation-id sequence */
     char buf[HLM_CLIENT_BUF];
     char resp[HLM_CLIENT_BUF];
 } hlm_client;
