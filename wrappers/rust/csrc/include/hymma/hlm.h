@@ -288,6 +288,22 @@ hlm_http hlm_http_winhttp(void); /* built-in WinHTTP transport */
 hlm_http hlm_http_curl(void);
 #endif
 
+/* Optional per-client HTTP connection cache. The plain constructors above
+ * tear the whole transport down after every request; binding a cache keeps
+ * one transport handle alive (curl easy handle / WinHTTP session) so the
+ * repeated same-host requests of a refresh share one TCP/TLS session.
+ * Same thread-safety contract as the client that owns it; close only after
+ * the owning client is done. Zero-initialize before first use. */
+typedef struct { void *h; } hlm_http_cache;
+
+#if defined(_WIN32)
+hlm_http hlm_http_winhttp_cached(hlm_http_cache *cache);
+#else
+hlm_http hlm_http_curl_cached(hlm_http_cache *cache);
+#endif
+
+void hlm_http_cache_close(hlm_http_cache *cache);
+
 /* Blob storage for the cached license (a file on desktops, flash on MCUs). */
 typedef struct {
     /* Return bytes read, 0 if absent, <0 on failure. */

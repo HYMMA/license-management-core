@@ -78,6 +78,7 @@ typedef struct {
     int (*easy_setopt)(hlm_CURL *, long, ...);
     int (*easy_perform)(hlm_CURL *);
     void (*easy_cleanup)(hlm_CURL *);
+    void (*easy_reset)(hlm_CURL *);
     int (*easy_getinfo)(hlm_CURL *, long, ...);
     hlm_curl_slist *(*slist_append)(hlm_curl_slist *, const char *);
     void (*slist_free_all)(hlm_curl_slist *);
@@ -107,12 +108,14 @@ static void curl_load_once(void)
     *(void **)&g_curl.easy_getinfo = dlsym(h, "curl_easy_getinfo");
     *(void **)&g_curl.slist_append = dlsym(h, "curl_slist_append");
     *(void **)&g_curl.slist_free_all = dlsym(h, "curl_slist_free_all");
+    *(void **)&g_curl.easy_reset = dlsym(h, "curl_easy_reset");
     *(void **)&global_init = dlsym(h, "curl_global_init");
 
     if (g_curl.easy_init == NULL || g_curl.easy_setopt == NULL ||
         g_curl.easy_perform == NULL || g_curl.easy_cleanup == NULL ||
         g_curl.easy_getinfo == NULL || g_curl.slist_append == NULL ||
-        g_curl.slist_free_all == NULL || global_init == NULL) {
+        g_curl.slist_free_all == NULL || g_curl.easy_reset == NULL ||
+        global_init == NULL) {
         dlclose(h);
         memset(&g_curl, 0, sizeof(g_curl));
         return;
@@ -180,6 +183,7 @@ static size_t curl_on_header(char *data, size_t size, size_t nmemb, void *user)
 static int curl_send(void *user, const hlm_http_request *req,
                      hlm_http_response *resp)
 {
+    hlm_http_cache *cache = (hlm_http_cache *)user;
     hlm_CURL *curl;
     hlm_curl_slist *headers = NULL;
     char line[600];
@@ -187,14 +191,22 @@ static int curl_send(void *user, const hlm_http_request *req,
     long status = 0;
     int rc;
 
-    (void)user;
     resp->retry_after_seconds = -1;
     resp->body_len = 0;
 
     if (curl_load() != 0) return HLM_E_HTTP;
 
-    curl = g_curl.easy_init();
-    if (curl == NULL) return HLM_E_HTTP;
+    /* With a cache, reuse one easy handle so the repeated same-host
+     * requests of a refresh share a TCP/TLS connection; reset wipes every
+     * option from the previous request. */
+    if (cache != NULL && cache->h != NULL) {
+        curl = (hlm_CURL *)cache->h;
+        g_curl.easy_reset(curl);
+    } else {
+        curl = g_curl.easy_init();
+        if (curl == NULL) return HLM_E_HTTP;
+        if (cache != NULL) cache->h = curl;
+    }
 
     w.resp = resp;
     w.overflow = 0;
@@ -245,7 +257,7 @@ static int curl_send(void *user, const hlm_http_request *req,
         g_curl.easy_getinfo(curl, HLM_CURLINFO_RESPONSE_CODE, &status);
 
     if (headers != NULL) g_curl.slist_free_all(headers);
-    g_curl.easy_cleanup(curl);
+    if (cache == NULL) g_curl.easy_cleanup(curl);
 
     if (w.overflow) return HLM_E_BUFFER;
     if (rc != 0 || status == 0) return HLM_E_HTTP;
@@ -260,6 +272,21 @@ hlm_http hlm_http_curl(void)
     h.send = curl_send;
     h.user = 0;
     return h;
+}
+
+hlm_http hlm_http_curl_cached(hlm_http_cache *cache)
+{
+    hlm_http h;
+    h.send = curl_send;
+    h.user = cache;
+    return h;
+}
+
+void hlm_http_cache_close(hlm_http_cache *cache)
+{
+    if (cache == NULL || cache->h == NULL) return;
+    g_curl.easy_cleanup((hlm_CURL *)cache->h); /* handle exists => loaded */
+    cache->h = NULL;
 }
 
 /* ------------------------------------------------------------------ */

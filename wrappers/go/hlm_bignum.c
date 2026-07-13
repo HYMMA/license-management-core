@@ -89,6 +89,10 @@ static void raw_mod(const uint32_t *num, int numn, const uint32_t *m, int mn,
 
 /* ------------- hlm_bn wrappers ------------- */
 
+/* Invariant: limbs at index >= n are undefined and every reader respects n.
+ * Ops therefore touch only the limbs in use — P-256's 8-limb operands no
+ * longer pay for the full 128-limb (RSA-4096) capacity on every call. */
+
 static void bn_normalize(hlm_bn *a)
 {
     while (a->n > 1 && a->v[a->n - 1] == 0) a->n--;
@@ -96,7 +100,7 @@ static void bn_normalize(hlm_bn *a)
 
 void hlm_bn_zero(hlm_bn *a)
 {
-    memset(a->v, 0, sizeof(a->v));
+    a->v[0] = 0;
     a->n = 1;
 }
 
@@ -108,15 +112,16 @@ void hlm_bn_from_u32(hlm_bn *a, uint32_t x)
 
 int hlm_bn_from_bytes_be(hlm_bn *a, const uint8_t *bytes, size_t len)
 {
-    size_t i;
+    size_t i, limbs;
     if (len > HLM_BN_MAX_LIMBS * 4) return -1;
-    hlm_bn_zero(a);
+    limbs = (len + 3) / 4;
+    if (limbs == 0) limbs = 1;
+    memset(a->v, 0, limbs * sizeof(uint32_t));
     for (i = 0; i < len; i++) {
         size_t bit_index = (len - 1 - i) * 8;
         a->v[bit_index / 32] |= (uint32_t)bytes[i] << (bit_index % 32);
     }
-    a->n = (int)((len + 3) / 4);
-    if (a->n == 0) a->n = 1;
+    a->n = (int)limbs;
     bn_normalize(a);
     return 0;
 }
@@ -171,7 +176,8 @@ int hlm_bn_bit(const hlm_bn *a, int i)
 
 void hlm_bn_copy(hlm_bn *dst, const hlm_bn *src)
 {
-    memcpy(dst, src, sizeof(*dst));
+    memcpy(dst->v, src->v, (size_t)src->n * sizeof(uint32_t));
+    dst->n = src->n;
 }
 
 int hlm_bn_add(hlm_bn *r, const hlm_bn *a, const hlm_bn *b)
@@ -191,7 +197,6 @@ int hlm_bn_add(hlm_bn *r, const hlm_bn *a, const hlm_bn *b)
         if (n >= HLM_BN_MAX_LIMBS) return -1;
         r->v[n++] = (uint32_t)carry;
     }
-    for (i = n; i < HLM_BN_MAX_LIMBS; i++) r->v[i] = 0;
     r->n = n;
     bn_normalize(r);
     return 0;
@@ -207,7 +212,6 @@ void hlm_bn_sub(hlm_bn *r, const hlm_bn *a, const hlm_bn *b)
         r->v[i] = (uint32_t)t;
         borrow = (t >> 32) & 1;
     }
-    for (i = a->n; i < HLM_BN_MAX_LIMBS; i++) r->v[i] = 0;
     r->n = a->n;
     bn_normalize(r);
 }
@@ -217,7 +221,6 @@ void hlm_bn_mod(hlm_bn *r, const hlm_bn *a, const hlm_bn *m)
     uint32_t out[HLM_BN_MAX_LIMBS];
     int mn = m->n;
     raw_mod(a->v, a->n, m->v, mn, out);
-    memset(r->v, 0, sizeof(r->v));
     memcpy(r->v, out, (size_t)mn * sizeof(uint32_t));
     r->n = mn;
     bn_normalize(r);
@@ -257,7 +260,6 @@ void hlm_bn_modmul(hlm_bn *r, const hlm_bn *a, const hlm_bn *b, const hlm_bn *m)
     raw_mul(a->v, a->n, b->v, b->n, prod);
     raw_mod(prod, a->n + b->n, m->v, mn, out);
 
-    memset(r->v, 0, sizeof(r->v));
     memcpy(r->v, out, (size_t)mn * sizeof(uint32_t));
     r->n = mn;
     bn_normalize(r);

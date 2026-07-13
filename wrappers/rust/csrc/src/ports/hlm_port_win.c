@@ -61,6 +61,7 @@ static int append_header(wchar_t *buf, int cap, int *pos, const wchar_t *fmt,
 static int winhttp_send(void *user, const hlm_http_request *req,
                         hlm_http_response *resp)
 {
+    hlm_http_cache *cache = (hlm_http_cache *)user;
     HINTERNET session = NULL, connect = NULL, request = NULL;
     wchar_t wurl[1024], whost[256], wpath[768], wmethod[16];
     wchar_t headers[1024];
@@ -69,7 +70,6 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     DWORD status = 0, status_len = sizeof(status);
     size_t total = 0;
 
-    (void)user;
     resp->retry_after_seconds = -1;
 
     if (utf8_to_wide(req->url, wurl,
@@ -86,13 +86,20 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     uc.dwUrlPathLength = (DWORD)(sizeof(wpath) / sizeof(wpath[0]));
     if (!WinHttpCrackUrl(wurl, 0, 0, &uc)) return HLM_E_ARG;
 
-    session = WinHttpOpen(L"license-management-core/1.0",
-                          WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (session == NULL) goto done;
-
-    WinHttpSetTimeouts(session, HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS,
-                       HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS);
+    /* With a cache, one session per client: the session owns WinHTTP's
+     * connection pool, so the repeated same-host requests of a refresh
+     * reuse a TCP/TLS connection instead of re-handshaking. */
+    if (cache != NULL && cache->h != NULL) {
+        session = (HINTERNET)cache->h;
+    } else {
+        session = WinHttpOpen(L"license-management-core/1.0",
+                              WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                              WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (session == NULL) goto done;
+        WinHttpSetTimeouts(session, HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS,
+                           HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS);
+        if (cache != NULL) cache->h = session;
+    }
 
     connect = WinHttpConnect(session, whost, uc.nPort, 0);
     if (connect == NULL) goto done;
@@ -189,7 +196,7 @@ static int winhttp_send(void *user, const hlm_http_request *req,
 done:
     if (request) WinHttpCloseHandle(request);
     if (connect) WinHttpCloseHandle(connect);
-    if (session) WinHttpCloseHandle(session);
+    if (session && cache == NULL) WinHttpCloseHandle(session);
     return result;
 }
 
@@ -199,6 +206,21 @@ hlm_http hlm_http_winhttp(void)
     h.send = winhttp_send;
     h.user = 0;
     return h;
+}
+
+hlm_http hlm_http_winhttp_cached(hlm_http_cache *cache)
+{
+    hlm_http h;
+    h.send = winhttp_send;
+    h.user = cache;
+    return h;
+}
+
+void hlm_http_cache_close(hlm_http_cache *cache)
+{
+    if (cache == NULL || cache->h == NULL) return;
+    WinHttpCloseHandle((HINTERNET)cache->h);
+    cache->h = NULL;
 }
 
 /* ------------------------------------------------------------------ */

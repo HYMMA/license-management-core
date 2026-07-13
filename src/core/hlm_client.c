@@ -358,10 +358,11 @@ static int ensure_computer(hlm_client *c, char *pc_id, size_t pc_id_cap)
     {
         hlm_json_tok toks[64];
         hlm_json_doc doc;
-        int ntok = hlm_json_parse(c->resp, strlen(c->resp), toks, 64);
+        size_t resp_len = strlen(c->resp);
+        int ntok = hlm_json_parse(c->resp, resp_len, toks, 64);
         int t;
         if (ntok <= 0) return HLM_E_FORMAT;
-        hlm_json_doc_init(&doc, c->resp, strlen(c->resp), toks, ntok);
+        hlm_json_doc_init(&doc, c->resp, resp_len, toks, ntok);
         t = hlm_json_member(&doc, 0, "id");
         if (t < 0) t = hlm_json_member(&doc, 0, "Id");
         if (t < 0 ||

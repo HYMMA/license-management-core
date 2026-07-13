@@ -133,14 +133,17 @@ static int jwk_decode_member(const hlm_json_doc *doc, int obj, const char *name,
                              uint8_t **cursor, uint8_t *end,
                              const uint8_t **out, size_t *out_len)
 {
-    char tmp[1024];
     size_t raw_len, dec;
+    const char *raw;
     int tok = hlm_json_member(doc, obj, name);
 
     if (tok < 0) return -1;
-    raw_len = hlm_json_string(doc, tok, tmp, sizeof(tmp));
-    if (raw_len == (size_t)-1) return -1;
-    dec = hlm_b64url_decode(tmp, raw_len, *cursor, (size_t)(end - *cursor));
+    /* base64url text never needs JSON unescaping, so decode straight from
+     * the token span — any escape sequence is invalid b64url and fails
+     * closed anyway. Saves a 1 KiB temp copy per JWK member. */
+    raw = hlm_json_raw(doc, tok, &raw_len);
+    if (raw == NULL) return -1;
+    dec = hlm_b64url_decode(raw, raw_len, *cursor, (size_t)(end - *cursor));
     if (dec == (size_t)-1) return -1;
     *out = *cursor;
     *out_len = dec;

@@ -21,6 +21,7 @@ struct hlm_ffi_client {
     char machine_name[HLM_MAX_NAME];
     char license_path[FFI_MAX_STR];
     hlm_storage_file_cfg storage_cfg;
+    hlm_http_cache http_cache; /* one TCP/TLS session across a refresh */
 };
 
 /* Parse a JWK object or array of JWK objects. */
@@ -161,11 +162,11 @@ HLM_API hlm_ffi_client *hlm_ffi_create(const char *base_url,
     cfg.crypto = hlm_crypto_portable();
     cfg.clock = hlm_clock_system();
 #if defined(_WIN32)
-    cfg.http = hlm_http_winhttp();
+    cfg.http = hlm_http_winhttp_cached(&c->http_cache);
     cfg.sleep = hlm_sleep_win();
     cfg.timesync = hlm_timesync_win(); /* clock-tamper cascade, like the SDK */
 #else
-    cfg.http = hlm_http_curl();
+    cfg.http = hlm_http_curl_cached(&c->http_cache);
     cfg.sleep = hlm_sleep_posix();
     cfg.timesync = hlm_timesync_posix();
 #endif
@@ -190,6 +191,8 @@ fail:
 
 HLM_API void hlm_ffi_destroy(hlm_ffi_client *c)
 {
+    if (c == NULL) return;
+    hlm_http_cache_close(&c->http_cache);
     free(c);
 }
 
