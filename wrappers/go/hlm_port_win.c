@@ -43,6 +43,21 @@ static int utf8_to_wide(const char *s, wchar_t *out, int cap)
     return n > 0 ? 0 : -1;
 }
 
+/* Append one formatted header line at *pos. Legacy _snwprintf returns a
+ * negative value and may leave the buffer unterminated on truncation, so
+ * check and re-terminate instead of blindly accumulating the return. */
+static int append_header(wchar_t *buf, int cap, int *pos, const wchar_t *fmt,
+                         const wchar_t *val)
+{
+    int n = _snwprintf(buf + *pos, (size_t)(cap - *pos), fmt, val);
+    if (n < 0 || n >= cap - *pos) {
+        buf[*pos] = L'\0';
+        return -1;
+    }
+    *pos += n;
+    return 0;
+}
+
 static int winhttp_send(void *user, const hlm_http_request *req,
                         hlm_http_response *resp)
 {
@@ -57,16 +72,18 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     (void)user;
     resp->retry_after_seconds = -1;
 
-    if (utf8_to_wide(req->url, wurl, 1024) < 0 ||
-        utf8_to_wide(req->method, wmethod, 16) < 0)
+    if (utf8_to_wide(req->url, wurl,
+                     (int)(sizeof(wurl) / sizeof(wurl[0]))) < 0 ||
+        utf8_to_wide(req->method, wmethod,
+                     (int)(sizeof(wmethod) / sizeof(wmethod[0]))) < 0)
         return HLM_E_ARG;
 
     memset(&uc, 0, sizeof(uc));
     uc.dwStructSize = sizeof(uc);
     uc.lpszHostName = whost;
-    uc.dwHostNameLength = 256;
+    uc.dwHostNameLength = (DWORD)(sizeof(whost) / sizeof(whost[0]));
     uc.lpszUrlPath = wpath;
-    uc.dwUrlPathLength = 768;
+    uc.dwUrlPathLength = (DWORD)(sizeof(wpath) / sizeof(wpath[0]));
     if (!WinHttpCrackUrl(wurl, 0, 0, &uc)) return HLM_E_ARG;
 
     session = WinHttpOpen(L"license-management-core/1.0",
@@ -88,22 +105,40 @@ static int winhttp_send(void *user, const hlm_http_request *req,
 
     {
         wchar_t wkey[256], wcorr[64], widem[300];
+        const int hcap = (int)(sizeof(headers) / sizeof(headers[0]));
         int hl = 0;
         headers[0] = L'\0';
-        if (req->api_key != NULL && utf8_to_wide(req->api_key, wkey, 256) == 0)
-            hl += _snwprintf(headers + hl, 1024 - hl, L"X-API-KEY: %s\r\n", wkey);
+        /* fail closed on conversion/truncation: sending a request with a
+         * silently dropped or half-written header would only misauth */
+        if (req->api_key != NULL &&
+            (utf8_to_wide(req->api_key, wkey,
+                          (int)(sizeof(wkey) / sizeof(wkey[0]))) < 0 ||
+             append_header(headers, hcap, &hl, L"X-API-KEY: %s\r\n", wkey) < 0)) {
+            result = HLM_E_ARG;
+            goto done;
+        }
         if (req->correlation_id != NULL &&
-            utf8_to_wide(req->correlation_id, wcorr, 64) == 0)
-            hl += _snwprintf(headers + hl, 1024 - hl,
-                             L"X-Correlation-Id: %s\r\n", wcorr);
+            (utf8_to_wide(req->correlation_id, wcorr,
+                          (int)(sizeof(wcorr) / sizeof(wcorr[0]))) < 0 ||
+             append_header(headers, hcap, &hl,
+                           L"X-Correlation-Id: %s\r\n", wcorr) < 0)) {
+            result = HLM_E_ARG;
+            goto done;
+        }
         if (req->idempotency_key != NULL &&
-            utf8_to_wide(req->idempotency_key, widem, 300) == 0)
-            hl += _snwprintf(headers + hl, 1024 - hl,
-                             L"Idempotency-Key: %s\r\n", widem);
-        if (req->body != NULL)
-            hl += _snwprintf(headers + hl, 1024 - hl,
-                             L"Content-Type: application/json\r\n");
-        (void)hl;
+            (utf8_to_wide(req->idempotency_key, widem,
+                          (int)(sizeof(widem) / sizeof(widem[0]))) < 0 ||
+             append_header(headers, hcap, &hl,
+                           L"Idempotency-Key: %s\r\n", widem) < 0)) {
+            result = HLM_E_ARG;
+            goto done;
+        }
+        if (req->body != NULL &&
+            append_header(headers, hcap, &hl,
+                          L"Content-Type: application/json\r\n", NULL) < 0) {
+            result = HLM_E_ARG;
+            goto done;
+        }
     }
 
     if (!WinHttpSendRequest(request,

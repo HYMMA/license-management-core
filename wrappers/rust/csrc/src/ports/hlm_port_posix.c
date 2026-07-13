@@ -152,7 +152,15 @@ static size_t curl_on_header(char *data, size_t size, size_t nmemb, void *user)
 
     /* delta-seconds Retry-After only (date form is ignored, like WinHTTP) */
     if (n > 12 && strncasecmp(data, "Retry-After:", 12) == 0) {
-        long v = strtol(data + 12, NULL, 10);
+        /* curl header data is NOT NUL-terminated: copy the value into a
+         * terminated local before strtol */
+        char num[16];
+        size_t m = n - 12;
+        long v;
+        if (m >= sizeof(num)) m = sizeof(num) - 1;
+        memcpy(num, data + 12, m);
+        num[m] = '\0';
+        v = strtol(num, NULL, 10);
         if (v >= 0 && v < 24 * 3600) resp->retry_after_seconds = (int)v;
     }
     return n;

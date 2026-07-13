@@ -28,23 +28,27 @@ static int cng_verify_rsa(const hlm_public_key *key,
     NTSTATUS st;
     int result = 0;
     UCHAR hash[32];
-    DWORD hash_len = 0, cb = 0;
+    DWORD hash_len = 0;
     BCRYPT_PKCS1_PADDING_INFO pad;
     UCHAR blob[8192];
-    BCRYPT_RSAKEY_BLOB *hdr = (BCRYPT_RSAKEY_BLOB *)blob;
+    BCRYPT_RSAKEY_BLOB hdr;
     size_t blob_len;
 
-    /* Build a BCRYPT_RSAPUBLIC_BLOB: header | exponent | modulus */
-    blob_len = sizeof(BCRYPT_RSAKEY_BLOB) + key->u.rsa.e_len + key->u.rsa.n_len;
+    /* Build a BCRYPT_RSAPUBLIC_BLOB: header | exponent | modulus.
+     * The header is built in a real struct and memcpy'd in — casting the
+     * UCHAR buffer to BCRYPT_RSAKEY_BLOB* would violate alignment and
+     * effective-type rules. */
+    blob_len = sizeof(hdr) + key->u.rsa.e_len + key->u.rsa.n_len;
     if (blob_len > sizeof(blob)) return HLM_E_ARG;
-    hdr->Magic = BCRYPT_RSAPUBLIC_MAGIC;
-    hdr->BitLength = (ULONG)(key->u.rsa.n_len * 8);
-    hdr->cbPublicExp = (ULONG)key->u.rsa.e_len;
-    hdr->cbModulus = (ULONG)key->u.rsa.n_len;
-    hdr->cbPrime1 = 0;
-    hdr->cbPrime2 = 0;
-    memcpy(blob + sizeof(BCRYPT_RSAKEY_BLOB), key->u.rsa.e, key->u.rsa.e_len);
-    memcpy(blob + sizeof(BCRYPT_RSAKEY_BLOB) + key->u.rsa.e_len,
+    hdr.Magic = BCRYPT_RSAPUBLIC_MAGIC;
+    hdr.BitLength = (ULONG)(key->u.rsa.n_len * 8);
+    hdr.cbPublicExp = (ULONG)key->u.rsa.e_len;
+    hdr.cbModulus = (ULONG)key->u.rsa.n_len;
+    hdr.cbPrime1 = 0;
+    hdr.cbPrime2 = 0;
+    memcpy(blob, &hdr, sizeof(hdr));
+    memcpy(blob + sizeof(hdr), key->u.rsa.e, key->u.rsa.e_len);
+    memcpy(blob + sizeof(hdr) + key->u.rsa.e_len,
            key->u.rsa.n, key->u.rsa.n_len);
 
     st = BCryptOpenAlgorithmProvider(&alg, BCRYPT_RSA_ALGORITHM, NULL, 0);
@@ -70,7 +74,6 @@ static int cng_verify_rsa(const hlm_public_key *key,
     result = NT_SUCCESS(st) ? 1 : 0;
 
 done:
-    (void)cb;
     if (hkey) BCryptDestroyKey(hkey);
     if (alg) BCryptCloseAlgorithmProvider(alg, 0);
     return result;
@@ -86,14 +89,15 @@ static int cng_verify_ecdsa(const hlm_public_key *key,
     int result = 0;
     UCHAR hash[32];
     UCHAR blob[sizeof(BCRYPT_ECCKEY_BLOB) + 64];
-    BCRYPT_ECCKEY_BLOB *hdr = (BCRYPT_ECCKEY_BLOB *)blob;
+    BCRYPT_ECCKEY_BLOB hdr;
 
     if (sig_len != 64) return 0;
 
-    hdr->dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
-    hdr->cbKey = 32;
-    memcpy(blob + sizeof(BCRYPT_ECCKEY_BLOB), key->u.ec.x, 32);
-    memcpy(blob + sizeof(BCRYPT_ECCKEY_BLOB) + 32, key->u.ec.y, 32);
+    hdr.dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
+    hdr.cbKey = 32;
+    memcpy(blob, &hdr, sizeof(hdr));
+    memcpy(blob + sizeof(hdr), key->u.ec.x, 32);
+    memcpy(blob + sizeof(hdr) + 32, key->u.ec.y, 32);
 
     st = BCryptOpenAlgorithmProvider(&alg, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0);
     if (!NT_SUCCESS(st)) return HLM_E_UNSUPPORTED_ALG;
