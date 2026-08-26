@@ -334,19 +334,57 @@ static int adopt_license(hlm_client *c, const char *jws, size_t len)
 /* server flow                                                         */
 /* ------------------------------------------------------------------ */
 
+/* Percent-encode a query value: RFC 3986 unreserved chars pass through. */
+static void url_encode(const char *s, char *out, size_t cap)
+{
+    static const char hexd[] = "0123456789ABCDEF";
+    size_t o = 0;
+
+    for (; *s != '\0'; s++) {
+        unsigned char ch = (unsigned char)*s;
+        int plain = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                    (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+                    ch == '.' || ch == '~';
+        if (plain) {
+            if (o + 1 >= cap) break;
+            out[o++] = (char)ch;
+        } else {
+            if (o + 3 >= cap) break;
+            out[o++] = '%';
+            out[o++] = hexd[ch >> 4];
+            out[o++] = hexd[ch & 15];
+        }
+    }
+    out[o < cap ? o : cap - 1] = '\0';
+}
+
 /* POST computer + GET computer -> computer id in `pc_id`. */
 static int ensure_computer(hlm_client *c, char *pc_id, size_t pc_id_cap)
 {
     char mac_esc[HLM_MAX_MACHINE_ID * 2], name_esc[HLM_MAX_NAME * 2];
-    char body[512], idem[256], path[512];
+    char body[768], idem[256], path[512];
+    const char *legacy = c->cfg.machine_id_legacy;
     int status, r;
+
+    if (legacy != NULL && legacy[0] == '\0') legacy = NULL;
 
     if (json_escape(c->cfg.machine_id, mac_esc, sizeof(mac_esc)) == (size_t)-1 ||
         json_escape(c->cfg.machine_name, name_esc, sizeof(name_esc)) == (size_t)-1)
         return HLM_E_ARG;
 
-    snprintf(body, sizeof(body), "{\"MacAddress\":\"%s\",\"Name\":\"%s\"}",
-             mac_esc, name_esc);
+    if (legacy != NULL) {
+        /* Identity v2: the v1 fingerprint rides along so the server can
+         * re-key this machine's pre-v2 row instead of minting a new trial. */
+        char legacy_esc[HLM_MAX_MACHINE_ID * 2];
+        if (json_escape(legacy, legacy_esc, sizeof(legacy_esc)) == (size_t)-1)
+            return HLM_E_ARG;
+        snprintf(body, sizeof(body),
+                 "{\"MacAddress\":\"%s\",\"Name\":\"%s\",\"LegacyMacAddress\":\"%s\"}",
+                 mac_esc, name_esc, legacy_esc);
+    } else {
+        snprintf(body, sizeof(body), "{\"MacAddress\":\"%s\",\"Name\":\"%s\"}",
+                 mac_esc, name_esc);
+    }
     snprintf(idem, sizeof(idem), "computer:%s:%s", c->cfg.machine_id,
              c->cfg.machine_name);
 
@@ -355,7 +393,16 @@ static int ensure_computer(hlm_client *c, char *pc_id, size_t pc_id_cap)
     if (!http_is_success(status) && status != 409)
         return map_api_error(c, status);
 
-    snprintf(path, sizeof(path), "computer?macAddress=%s", c->cfg.machine_id);
+    if (legacy != NULL) {
+        char name_url[HLM_MAX_NAME * 3];
+        url_encode(c->cfg.machine_name, name_url, sizeof(name_url));
+        snprintf(path, sizeof(path),
+                 "computer?macAddress=%s&legacyMacAddress=%s&name=%s",
+                 c->cfg.machine_id, legacy, name_url);
+    } else {
+        snprintf(path, sizeof(path), "computer?macAddress=%s",
+                 c->cfg.machine_id);
+    }
     r = send_req(c, "GET", path, NULL, NULL, &status);
     if (r != HLM_OK) return r;
     if (!http_is_success(status)) return map_api_error(c, status);
