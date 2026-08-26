@@ -86,6 +86,10 @@ namespace LicenseManagement.Core
             [Out] byte[] buffer, int capacity);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int hlm_ffi_machine_id_v2(
+            [Out] byte[] buffer, int capacity);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int hlm_ffi_machine_name(
             [Out] byte[] buffer, int capacity);
 

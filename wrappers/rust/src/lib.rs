@@ -335,6 +335,19 @@ pub fn machine_id() -> Result<String> {
     Ok(buf_to_string(&buf))
 }
 
+/// Identity v2: the MachineGuid fingerprint on Windows (unique per Windows
+/// install — the v1 sources collide across machines); identical to
+/// [`machine_id`] on POSIX.
+pub fn machine_id_v2() -> Result<String> {
+    let mut buf = [0u8; 64];
+    let r =
+        unsafe { ffi::hlm_ffi_machine_id_v2(buf.as_mut_ptr() as *mut c_char, buf.len() as c_int) };
+    if r != 0 {
+        return Err(LicenseError::new(r, String::new()));
+    }
+    Ok(buf_to_string(&buf))
+}
+
 /// This computer's name, as the SDK would send it.
 pub fn machine_name() -> Result<String> {
     let mut buf = [0u8; 256];

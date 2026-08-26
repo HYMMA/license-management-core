@@ -205,6 +205,18 @@ func MachineID() (string, error) {
 	return C.GoString(buf), nil
 }
 
+// MachineIDV2 returns identity v2: the MachineGuid fingerprint on Windows
+// (unique per Windows install — the v1 sources collide across machines);
+// identical to MachineID on POSIX.
+func MachineIDV2() (string, error) {
+	buf := (*C.char)(C.malloc(64))
+	defer C.free(unsafe.Pointer(buf))
+	if r := C.hlm_ffi_machine_id_v2(buf, 64); r != 0 {
+		return "", &Error{Code: int(r)}
+	}
+	return C.GoString(buf), nil
+}
+
 // MachineName returns this computer's name, as the SDK would send it.
 func MachineName() (string, error) {
 	buf := (*C.char)(C.malloc(256))

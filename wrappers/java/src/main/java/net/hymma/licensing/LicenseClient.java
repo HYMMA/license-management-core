@@ -131,6 +131,15 @@ public final class LicenseClient implements AutoCloseable {
         return Native.machineId();
     }
 
+    /**
+     * Identity v2: the MachineGuid fingerprint on Windows (unique per Windows
+     * install — the v1 sources collide across machines); identical to
+     * {@link #machineId()} on POSIX.
+     */
+    public static String machineIdV2() {
+        return Native.machineIdV2();
+    }
+
     /** This computer's name, as the SDK would send it. */
     public static String machineName() {
         return Native.machineName();

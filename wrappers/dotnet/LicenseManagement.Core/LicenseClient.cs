@@ -162,6 +162,17 @@ namespace LicenseManagement.Core
             return Ascii(buf);
         }
 
+        /// <summary>Identity v2: the MachineGuid fingerprint on Windows (unique per
+        /// Windows install — the v1 sources collide across machines); identical to
+        /// <see cref="GetMachineId"/> on POSIX.</summary>
+        public static string GetMachineIdV2()
+        {
+            var buf = new byte[64];
+            var r = NativeMethods.hlm_ffi_machine_id_v2(buf, buf.Length);
+            if (r != 0) throw new LicenseException(r);
+            return Ascii(buf);
+        }
+
         /// <summary>Offline verification of a signed license string (no client needed).</summary>
         public static LicenseStatus Verify(string jws, string jwksJson,
             string? expectedProductId = null, string? expectedMachineId = null,

@@ -64,6 +64,9 @@ extern "C" {
     pub fn hlm_ffi_err_name(err: c_int) -> *const c_char;
     /// Hardware fingerprint (Crockford Base32) into `out` (cap bytes).
     pub fn hlm_ffi_machine_id(out: *mut c_char, cap: c_int) -> c_int;
+    /// Identity v2: MachineGuid fingerprint on Windows (collision-proof);
+    /// on POSIX identical to `hlm_ffi_machine_id`.
+    pub fn hlm_ffi_machine_id_v2(out: *mut c_char, cap: c_int) -> c_int;
     pub fn hlm_ffi_machine_name(out: *mut c_char, cap: c_int) -> c_int;
 
     /// Offline one-shot: verify a signed license string against `jwks_json`

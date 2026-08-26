@@ -128,6 +128,8 @@ final class Native {
             FunctionDescriptor.of(ADDRESS, JAVA_INT));
     private static final MethodHandle MACHINE_ID = down("hlm_ffi_machine_id",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
+    private static final MethodHandle MACHINE_ID_V2 = down("hlm_ffi_machine_id_v2",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
     private static final MethodHandle MACHINE_NAME = down("hlm_ffi_machine_name",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
     private static final MethodHandle VERIFY = down("hlm_ffi_verify",
@@ -329,6 +331,19 @@ final class Native {
         try (Arena a = Arena.ofConfined()) {
             MemorySegment buf = a.allocate(64);
             int r = (int) MACHINE_ID.invokeExact(buf, 64);
+            if (r != 0) {
+                throw new LicenseException(r);
+            }
+            return buf.getUtf8String(0);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static String machineIdV2() {
+        try (Arena a = Arena.ofConfined()) {
+            MemorySegment buf = a.allocate(64);
+            int r = (int) MACHINE_ID_V2.invokeExact(buf, 64);
             if (r != 0) {
                 throw new LicenseException(r);
             }

@@ -184,6 +184,8 @@ def _bind(lib: ctypes.CDLL) -> None:
     lib.hlm_ffi_err_name.argtypes = [c_i]
     lib.hlm_ffi_machine_id.restype = c_i
     lib.hlm_ffi_machine_id.argtypes = [c_s, c_i]
+    lib.hlm_ffi_machine_id_v2.restype = c_i
+    lib.hlm_ffi_machine_id_v2.argtypes = [c_s, c_i]
     lib.hlm_ffi_machine_name.restype = c_i
     lib.hlm_ffi_machine_name.argtypes = [c_s, c_i]
     lib.hlm_ffi_verify.restype = c_i
@@ -210,6 +212,17 @@ def machine_id() -> str:
     identical to the .NET SDK's DeviceId on the same machine."""
     buf = ctypes.create_string_buffer(64)
     r = _lib().hlm_ffi_machine_id(buf, len(buf))
+    if r != 0:
+        raise LicenseError(r)
+    return buf.value.decode()
+
+
+def machine_id_v2() -> str:
+    """Identity v2: the MachineGuid fingerprint on Windows (unique per
+    Windows install -- the v1 sources collide across machines); identical
+    to machine_id() on POSIX."""
+    buf = ctypes.create_string_buffer(64)
+    r = _lib().hlm_ffi_machine_id_v2(buf, len(buf))
     if r != 0:
         raise LicenseError(r)
     return buf.value.decode()
