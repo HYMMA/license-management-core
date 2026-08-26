@@ -48,7 +48,9 @@ typedef struct hlm_ffi_client hlm_ffi_client;
  *                (the vendor's public keys — from /api/signingkeys.json)
  *  format        1=RS256("jws") 2=ES256("es256") 3=EdDSA("eddsa")
  *  valid_days    0 => 90
- *  machine_id    NULL => derive from hardware (Windows builds)
+ *  machine_id    NULL => identity v2 (MachineGuid) with the v1 hardware
+ *                fingerprint sent as LegacyMacAddress for server re-key
+ *                (Windows builds; v1 alone when no MachineGuid)
  *  machine_name  NULL => this computer's name (Windows builds)
  *  license_path  NULL => no offline cache; else the .lic cache file
  * Returns NULL on invalid arguments. */
@@ -95,7 +97,10 @@ HLM_API const char *hlm_ffi_last_error_detail(hlm_ffi_client *c);
 
 /* Stateless helpers */
 HLM_API const char *hlm_ffi_err_name(int err);
-HLM_API int hlm_ffi_machine_id(char *out, int cap);   /* hardware fingerprint */
+HLM_API int hlm_ffi_machine_id(char *out, int cap);   /* v1 hardware fingerprint */
+/* Identity v2: MachineGuid fingerprint on Windows (collision-proof);
+ * on POSIX identical to hlm_ffi_machine_id(). */
+HLM_API int hlm_ffi_machine_id_v2(char *out, int cap);
 HLM_API int hlm_ffi_machine_name(char *out, int cap);
 
 /* Offline one-shot: verify a signed license string against jwks_json and

@@ -245,6 +245,16 @@ int hlm_fingerprint(const char *const *components, size_t count,
  * WMI Win32_BaseBoard.SerialNumber / Win32_Processor.ProcessorId, then
  * hlm_fingerprint(). Produces the same MachineId as the .NET SDK. */
 int hlm_machine_id_win(char *out, size_t out_len);
+/* Windows identity v2: fingerprint of the Windows MachineGuid
+ * (HKLM\SOFTWARE\Microsoft\Cryptography) -- unique per Windows install.
+ * v1's inputs collide across machines: ProcessorId is shared by every CPU of
+ * the same model and OEM baseboards often report placeholder serials, so
+ * unrelated computers hashed to the same id. New clients send v2 as
+ * MacAddress plus the v1 value as LegacyMacAddress; the server re-keys the
+ * machine's existing row (same name) instead of minting a fresh trial.
+ * Fails (HLM_E_ARG) only when the registry value is unreadable -- fall back
+ * to hlm_machine_id_win(). */
+int hlm_machine_id_win_v2(char *out, size_t out_len);
 /* Computer name as the SDK sends it (Environment.MachineName equivalent). */
 int hlm_machine_name_win(char *out, size_t out_len);
 #else
@@ -388,6 +398,10 @@ typedef struct {
     hlm_clock clock;
     hlm_sleep sleep;           /* optional: retry backoff waits */
     hlm_timesync timesync;     /* optional: clock-tamper resistance */
+
+    /* Optional v1 fingerprint sent as LegacyMacAddress so the server can
+     * re-key this machine's pre-v2 row to `machine_id`. NULL: none. */
+    const char *machine_id_legacy;
 } hlm_client_cfg;
 
 typedef struct {

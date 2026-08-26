@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Machine identity v2** (`hlm_machine_id_win_v2` / `hlm_ffi_machine_id_v2`):
+  fingerprint of the Windows `MachineGuid` (unique per Windows install).
+  The v1 sources collide across unrelated machines — `ProcessorId` is shared
+  by every CPU of the same model and OEM baseboards often report placeholder
+  serials — which handed one customer's expired-trial row to another customer's
+  brand-new install. `hlm_client_cfg` gains `machine_id_legacy`: when set, the
+  client sends it as `LegacyMacAddress` (POST body and GET query, along with
+  `name`) so the server can re-key the machine's existing row to the v2 id
+  instead of minting a fresh trial. `hlm_ffi_create` with `machine_id == NULL`
+  now derives v2 + v1-legacy automatically (v1 alone when no `MachineGuid`).
+  POSIX ids were already install-unique and are unchanged.
+
+### Added
+
 - Maven Central publishing on `v*` tags (`net.hymma:hymmalm`): release jars
   bundle all five platform libraries under `/native/` and the Java loader
   extracts the right one at runtime — same batteries-included install as

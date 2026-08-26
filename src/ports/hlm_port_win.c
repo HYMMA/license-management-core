@@ -6,6 +6,11 @@
  * so the same physical machine registers as the SAME computer whether the
  * vendor ships the .NET SDK or this core.
  *
+ * Identity v2 (hlm_machine_id_win_v2) fingerprints the Windows MachineGuid
+ * instead: the v1 sources collide across machines (ProcessorId is per CPU
+ * model; OEM boards ship placeholder serials). See hlm.h for the
+ * LegacyMacAddress re-key protocol.
+ *
  * Trusted time reproduces the SDK's TimeSyncDiagnostic cascade:
  *   local clock IF w32time is running, configured for NTP, and within 1h of
  *   time.windows.com; otherwise SNTP to pool.ntp.org; otherwise fail (the
@@ -498,6 +503,43 @@ int hlm_machine_id_win(char *out, size_t out_len)
     components[0] = serial;
     components[1] = cpu;
     return hlm_fingerprint(components, 2, out, out_len);
+}
+
+/* HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid: generated once at
+ * Windows installation, unique per install, immune to the placeholder
+ * hardware strings that make v1 collide. Read from the 64-bit hive
+ * regardless of process bitness (DeviceId's AddMachineGuid does the same). */
+static int registry_machine_guid(char *out, size_t out_len)
+{
+    HKEY key;
+    DWORD type = 0, sz;
+
+    if (out_len < 2) return -1;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography",
+                      0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key) !=
+        ERROR_SUCCESS)
+        return -1;
+    sz = (DWORD)(out_len - 1);
+    if (RegQueryValueExA(key, "MachineGuid", NULL, &type, (LPBYTE)out, &sz) !=
+            ERROR_SUCCESS ||
+        type != REG_SZ) {
+        RegCloseKey(key);
+        return -1;
+    }
+    RegCloseKey(key);
+    out[sz] = '\0'; /* REG_SZ is not guaranteed to include the NUL */
+    return strlen(out) >= 8 ? 0 : -1;
+}
+
+int hlm_machine_id_win_v2(char *out, size_t out_len)
+{
+    char guid[128];
+    const char *components[1];
+
+    if (registry_machine_guid(guid, sizeof(guid)) != 0)
+        return HLM_E_ARG; /* no MachineGuid -- fall back to hlm_machine_id_win */
+    components[0] = guid;
+    return hlm_fingerprint(components, 1, out, out_len);
 }
 
 int hlm_machine_name_win(char *out, size_t out_len)

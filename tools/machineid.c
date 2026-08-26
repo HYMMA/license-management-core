@@ -15,6 +15,13 @@ int main(void)
     }
     if (hlm_machine_name_win(name, sizeof(name)) != HLM_OK) name[0] = '\0';
     printf("MachineId:   %s\nMachineName: %s\n", id, name);
+    {
+        char v2[HLM_MAX_MACHINE_ID];
+        if (hlm_machine_id_win_v2(v2, sizeof(v2)) == HLM_OK)
+            printf("MachineIdV2: %s\n", v2);
+        else
+            printf("MachineIdV2: unavailable (no MachineGuid)\n");
+    }
     return 0;
 #else
     printf("built-in fingerprint sources are Windows-only; on other platforms\n"

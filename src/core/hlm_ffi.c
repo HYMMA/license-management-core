@@ -18,6 +18,7 @@ struct hlm_ffi_client {
     char api_key[FFI_MAX_STR];
     char base_url[FFI_MAX_STR];
     char machine_id[HLM_MAX_MACHINE_ID];
+    char machine_id_legacy[HLM_MAX_MACHINE_ID];
     char machine_name[HLM_MAX_NAME];
     char license_path[FFI_MAX_STR];
     hlm_storage_file_cfg storage_cfg;
@@ -126,7 +127,15 @@ HLM_API hlm_ffi_client *hlm_ffi_create(const char *base_url,
             goto fail;
     } else {
 #if defined(_WIN32)
-        if (hlm_machine_id_win(c->machine_id, sizeof(c->machine_id)) != HLM_OK)
+        /* Prefer identity v2 (MachineGuid); carry v1 as the legacy id so the
+         * server can re-key an existing row. No MachineGuid => v1 alone. */
+        if (hlm_machine_id_win_v2(c->machine_id, sizeof(c->machine_id)) ==
+            HLM_OK) {
+            if (hlm_machine_id_win(c->machine_id_legacy,
+                                   sizeof(c->machine_id_legacy)) != HLM_OK)
+                c->machine_id_legacy[0] = '\0';
+        } else if (hlm_machine_id_win(c->machine_id, sizeof(c->machine_id)) !=
+                   HLM_OK)
             goto fail;
 #else
         if (hlm_machine_id_posix(c->machine_id, sizeof(c->machine_id)) != HLM_OK)
@@ -158,6 +167,8 @@ HLM_API hlm_ffi_client *hlm_ffi_create(const char *base_url,
     cfg.keys = c->keys;
     cfg.key_count = key_count;
     cfg.machine_id = c->machine_id;
+    cfg.machine_id_legacy =
+        c->machine_id_legacy[0] != '\0' ? c->machine_id_legacy : NULL;
     cfg.machine_name = c->machine_name;
     cfg.crypto = hlm_crypto_portable();
     cfg.clock = hlm_clock_system();
@@ -308,6 +319,16 @@ HLM_API int hlm_ffi_machine_id(char *out, int cap)
     return hlm_machine_id_win(out, (size_t)cap);
 #else
     return hlm_machine_id_posix(out, (size_t)cap);
+#endif
+}
+
+HLM_API int hlm_ffi_machine_id_v2(char *out, int cap)
+{
+    if (out == NULL || cap <= 0) return HLM_E_ARG;
+#if defined(_WIN32)
+    return hlm_machine_id_win_v2(out, (size_t)cap);
+#else
+    return hlm_machine_id_posix(out, (size_t)cap); /* already install-unique */
 #endif
 }
 

@@ -41,6 +41,12 @@
         "stm32-uid-0123456789abcdef"
       ],
       "Expected": "KNV8Y3HFKPFWMJ3XBNX1ERB3Q6WTSAD4VPHQNTBFHK1BMBVJG9Q0"
+    },
+    {
+      "Components": [
+        "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+      ],
+      "Expected": "HX00R9BP27PNTC60WSG7NHGGEGR7VYH4SXRAHT9C7T0MFNKX5HR0"
     }
   ],
   "Cases": [
