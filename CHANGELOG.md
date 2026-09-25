@@ -6,7 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
+## [0.1.5] - 2026-09-25
+
+### Fixed
 
 - **Machine identity v2** (`hlm_machine_id_win_v2` / `hlm_ffi_machine_id_v2`):
   fingerprint of the Windows `MachineGuid` (unique per Windows install).
@@ -18,7 +20,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   `name`) so the server can re-key the machine's existing row to the v2 id
   instead of minting a fresh trial. `hlm_ffi_create` with `machine_id == NULL`
   now derives v2 + v1-legacy automatically (v1 alone when no `MachineGuid`).
-  POSIX ids were already install-unique and are unchanged.
+  POSIX ids were already install-unique and are unchanged. Upgrading is
+  seamless for existing installs: the server re-keys their machine rows.
+
+## [0.1.2] - [0.1.4] - 2026-07-13
+
+Released without separate notes; together they added:
 
 ### Added
 
