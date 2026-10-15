@@ -75,6 +75,64 @@ namespace LicenseManagement.Core
         PlanLimitReached = -15,
     }
 
+    /// <summary>Why the license server could not be reached (native hlm_net_failure);
+    /// same names as the classic SDK's NetworkFailureReason.</summary>
+    public enum NetworkFailure
+    {
+        /// <summary>No transport failure on the last call.</summary>
+        None = 0,
+        /// <summary>The cause could not be determined.</summary>
+        Unknown = 1,
+        /// <summary>DNS returned no address for the server — typically a company DNS filter.</summary>
+        NameResolution = 2,
+        /// <summary>The TLS handshake failed — often an HTTPS-inspecting proxy or security product.</summary>
+        SecureConnection = 3,
+        /// <summary>A web proxy refused or failed the connection, or demanded credentials (407).</summary>
+        Proxy = 4,
+        /// <summary>The server did not answer in time.</summary>
+        Timeout = 5,
+        /// <summary>The address was found but the connection was refused or dropped.</summary>
+        Connection = 6,
+    }
+
+    /// <summary>Outcome of <see cref="LicenseClient.ImportLicense"/> (native hlm_import_result);
+    /// same names as the classic SDK's LicenseImportOutcome.</summary>
+    public enum LicenseImportOutcome
+    {
+        /// <summary>Verified and installed where the client reads it.</summary>
+        Installed = 0,
+        /// <summary>Not a license file this library can read.</summary>
+        NotALicenseFile = 1,
+        /// <summary>No public key was configured, so the file could not be verified.</summary>
+        NoPublicKey = 2,
+        /// <summary>The signature does not verify (altered, or another vendor's file).</summary>
+        SignatureInvalid = 3,
+        /// <summary>The file is for a different product.</summary>
+        WrongProduct = 4,
+        /// <summary>The file is for a different computer.</summary>
+        WrongComputer = 5,
+        /// <summary>The file could not be written to the license path.</summary>
+        WriteFailed = 6,
+    }
+
+    /// <summary>What happened to an imported license file, with a message written for the end user.</summary>
+    public sealed class LicenseImportResult
+    {
+        internal LicenseImportResult(LicenseImportOutcome outcome, string message, string? installedPath)
+        {
+            Outcome = outcome;
+            Message = message;
+            InstalledPath = installedPath;
+        }
+
+        public LicenseImportOutcome Outcome { get; }
+        public bool Succeeded => Outcome == LicenseImportOutcome.Installed;
+        /// <summary>End-user message for the outcome, e.g. "This license file is for the computer X. ..."</summary>
+        public string Message { get; }
+        /// <summary>Where the file now lives, when <see cref="Succeeded"/>.</summary>
+        public string? InstalledPath { get; }
+    }
+
     public sealed class LicenseException : Exception
     {
         public int NativeError { get; }
@@ -82,16 +140,25 @@ namespace LicenseManagement.Core
         /// <summary>The classified refusal reason.</summary>
         public LicenseError Error => (LicenseError)NativeError;
 
-        /// <summary>The server's human-readable refusal detail, when it sent one.</summary>
+        /// <summary>The server's human-readable refusal detail, when it sent one; for
+        /// <see cref="LicenseError.NetworkFailure"/> a message that says what failed and
+        /// names the host to allow.</summary>
         public string Detail { get; }
 
-        internal LicenseException(int err, string? detail = null)
+        /// <summary>For <see cref="LicenseError.NetworkFailure"/>: what failed (DNS, TLS,
+        /// proxy, timeout, connection), so a UI can offer the right way out —
+        /// e.g. <see cref="LicenseClient.ImportLicenseFile"/>.</summary>
+        public NetworkFailure NetworkFailure { get; }
+
+        internal LicenseException(int err, string? detail = null,
+            NetworkFailure networkFailure = NetworkFailure.None)
             : base(string.IsNullOrEmpty(detail)
                 ? NativeMethods.Str(NativeMethods.hlm_ffi_err_name(err))
                 : $"{NativeMethods.Str(NativeMethods.hlm_ffi_err_name(err))}: {detail}")
         {
             NativeError = err;
             Detail = detail ?? string.Empty;
+            NetworkFailure = networkFailure;
         }
     }
 
@@ -153,6 +220,46 @@ namespace LicenseManagement.Core
         public string GetMetadata(string key) =>
             NativeMethods.Str(NativeMethods.hlm_ffi_metadata(Handle, key));
 
+        /// <summary>Why the server could not be reached on the last call. Also set when
+        /// <see cref="Check"/> succeeded from the cached file because the network failed.</summary>
+        public NetworkFailure LastNetworkFailure =>
+            (NetworkFailure)NativeMethods.hlm_ffi_last_network_failure(Handle);
+
+        /// <summary>The license cache file this client reads and writes ("" when none) —
+        /// for a host UI to show where the license lives.</summary>
+        public string LicensePath => NativeMethods.Str(NativeMethods.hlm_ffi_license_path(Handle));
+
+        /// <summary>
+        /// Installs a signed license the user obtained outside the online flow (vendor
+        /// portal, email) on a computer that cannot reach the server. It is verified
+        /// exactly as the offline cache is — vendor signature, product, this computer —
+        /// before it replaces anything, so a wrong or tampered file never displaces a
+        /// working one. Never touches the network.
+        /// </summary>
+        public LicenseImportResult ImportLicense(string document)
+        {
+            if (document == null) throw new ArgumentNullException(nameof(document));
+            return ImportResult(NativeMethods.hlm_ffi_import_license(Handle, document));
+        }
+
+        /// <summary>Reads, verifies and installs the license file at <paramref name="sourceFilePath"/>.</summary>
+        public LicenseImportResult ImportLicenseFile(string sourceFilePath)
+        {
+            string content;
+            try
+            {
+                // read here, not natively: .NET opens any Unicode path
+                content = System.IO.File.ReadAllText(sourceFilePath);
+            }
+            catch (Exception e) when (e is System.IO.IOException || e is UnauthorizedAccessException ||
+                                      e is ArgumentException || e is NotSupportedException)
+            {
+                return new LicenseImportResult(LicenseImportOutcome.NotALicenseFile,
+                    $"The file could not be read: {e.Message}", null);
+            }
+            return ImportLicense(content);
+        }
+
         /// <summary>This machine's fingerprint — identical to the classic .NET SDK's.</summary>
         public static string GetMachineId()
         {
@@ -203,8 +310,18 @@ namespace LicenseManagement.Core
         {
             if (err != 0)
                 throw new LicenseException(err,
-                    NativeMethods.Str(NativeMethods.hlm_ffi_last_error_detail(Handle)));
+                    NativeMethods.Str(NativeMethods.hlm_ffi_last_error_detail(Handle)),
+                    err == (int)LicenseError.NetworkFailure ? LastNetworkFailure : NetworkFailure.None);
             return Status;
+        }
+
+        private LicenseImportResult ImportResult(int r)
+        {
+            if (r < 0) throw new LicenseException(r);
+            var outcome = (LicenseImportOutcome)r;
+            return new LicenseImportResult(outcome,
+                NativeMethods.Str(NativeMethods.hlm_ffi_last_error_detail(Handle)),
+                outcome == LicenseImportOutcome.Installed ? LicensePath : null);
         }
 
         private static DateTime? FromUnix(long seconds) =>

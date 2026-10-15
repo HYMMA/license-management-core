@@ -6,6 +6,67 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
+### Added
+
+- **Say what failed when the server is unreachable.** A transport failure is
+  still `HLM_E_HTTP`, but the client now records why — `hlm_net_failure`:
+  `NameResolution` (DNS), `SecureConnection` (TLS), `Proxy`, `Timeout`,
+  `Connection`, `Unknown` — in `hlm_client.last_net_failure`
+  (`hlm_ffi_last_network_failure`), and puts an end-user message that names
+  the host to allow in `last_error` (`hlm_ffi_last_error_detail`), worded as
+  the .NET SDK 3.5.0 words it. Every online action used to read "network
+  failure", which sent an App Store reviewer whose company DNS refused to
+  resolve the server (Windows 11004, `WSANO_DATA`) to check an internet
+  connection that was fine. The cause stays visible when `check()` falls
+  back to the cached file. Transports report the cause through the new
+  `hlm_http_response.failure`; `hlm_net_failure_from_winhttp` /
+  `hlm_net_failure_from_curl` map WinHTTP/Winsock errors and CURLcodes, and
+  `hlm_net_message` formats the message. A proxy's 407 is classified as
+  `Proxy` and not retried.
+- **Install a license file by hand** (`hlm_license_import`,
+  `hlm_client_import`, `hlm_ffi_import_license`,
+  `hlm_ffi_import_license_file`): for computers that cannot reach the
+  server, the customer downloads their signed license from the vendor's
+  portal (or receives it by email) and the app installs it. The file is
+  verified exactly as the offline cache is — vendor signature, product, this
+  computer — BEFORE it replaces anything, so a wrong or tampered file never
+  displaces a working one. Outcomes (`hlm_import_result`): `Installed`,
+  `NotALicenseFile`, `NoPublicKey`, `SignatureInvalid`, `WrongProduct`,
+  `WrongComputer`, `WriteFailed`, each with an end-user message
+  (`hlm_import_message`). Never touches the network.
+- `hlm_ffi_license_path` exposes the license cache file a client reads and
+  writes, so a host UI can show it.
+- `hlm_license_check_machine`: `hlm_license_check` binding to this machine
+  under identity v2 or the legacy v1 id.
+- All seven wrappers (.NET, Python, Rust, Go, Java, Node, PHP) expose the
+  network failure cause (on the client and on the error), license-file
+  import (`ImportLicense` / `ImportLicenseFile` returning outcome + message)
+  and the license path.
+
+### Changed
+
+- **WinHTTP uses the system proxy like a browser, before Windows 8.1 too.**
+  The session already asked for `WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`
+  (WPAD/PAC/Internet Options); on Windows older than 8.1, which rejects it,
+  it now falls back to `WINHTTP_ACCESS_TYPE_DEFAULT_PROXY` instead of
+  failing every request. A proxy's Negotiate/NTLM 407 challenge is answered
+  once with the signed-in user's Windows credentials (autologon policy LOW
+  on that request only, after the proxy asked) — an authenticating company
+  proxy used to fail the license check while the browser worked.
+- `HLM_MAX_ERROR_DETAIL` is 512 (was 256) so a network message naming the
+  host twice is never truncated; `hlm_client` grows accordingly — rebuild
+  code that embeds the struct.
+
+### Fixed
+
+- **The offline load accepts a file bound to this machine's legacy (v1) id**
+  when `machine_id_legacy` is configured, as the .NET SDK's
+  `ComputerIdValidatorHandler` does. A file issued before the server
+  re-keyed the machine to identity v2 was refused offline as another
+  computer's and re-fetched — impossible without a network.
+
 ## [0.1.5] - 2026-09-25
 
 ### Fixed

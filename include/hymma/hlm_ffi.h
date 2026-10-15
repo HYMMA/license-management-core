@@ -91,9 +91,40 @@ HLM_API int hlm_ffi_live_mode(hlm_ffi_client *c);
 HLM_API const char *hlm_ffi_metadata(hlm_ffi_client *c, const char *key);
 HLM_API int hlm_ffi_last_http_status(hlm_ffi_client *c);
 
-/* The server's human-readable refusal detail from the last failed call on
- * this client ("" when none) — show it to the user alongside the error code. */
+/* The human-readable detail of the last failed call on this client ("" when
+ * none) — show it to the user alongside the error code: the server's refusal
+ * detail, or for HLM_E_HTTP (-7) a message saying what failed and naming the
+ * host to allow. After hlm_ffi_import_license*, the end-user message for the
+ * import outcome (including "License file installed."). */
 HLM_API const char *hlm_ffi_last_error_detail(hlm_ffi_client *c);
+
+/* Why the server could not be reached on the last call (hlm_net_failure:
+ * 0 None, 1 Unknown, 2 NameResolution, 3 SecureConnection, 4 Proxy,
+ * 5 Timeout, 6 Connection). Also set when check() succeeded from the cached
+ * file because the network failed — a UI can offer the by-hand install. */
+HLM_API int hlm_ffi_last_network_failure(hlm_ffi_client *c);
+HLM_API const char *hlm_ffi_network_failure_name(int failure);
+
+/* Install a license file obtained outside the online flow (vendor portal,
+ * email) for a computer that cannot reach the server. Verified exactly as
+ * the offline cache is (signature with the vendor keys, product, this
+ * machine under identity v2 or the legacy id) and only then written to
+ * license_path; a file that fails verification never replaces the existing
+ * one. Returns an hlm_import_result:
+ *   0 Installed, 1 NotALicenseFile, 2 NoPublicKey, 3 SignatureInvalid,
+ *   4 WrongProduct, 5 WrongComputer, 6 WriteFailed
+ * or HLM_E_ARG (-1) for a NULL argument or a client created without
+ * license_path. Never touches the network. */
+HLM_API int hlm_ffi_import_license(hlm_ffi_client *c, const char *document);
+/* Same, reading the document from `path` (an unreadable or oversized file
+ * is NotALicenseFile, with the reason in hlm_ffi_last_error_detail). */
+HLM_API int hlm_ffi_import_license_file(hlm_ffi_client *c, const char *path);
+HLM_API const char *hlm_ffi_import_result_name(int result);
+
+/* The license cache file this client reads and writes (the license_path it
+ * was created with; "" when none) — read-only, for a host UI to show where
+ * the license lives. */
+HLM_API const char *hlm_ffi_license_path(hlm_ffi_client *c);
 
 /* Stateless helpers */
 HLM_API const char *hlm_ffi_err_name(int err);

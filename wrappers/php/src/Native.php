@@ -47,6 +47,9 @@ int hlm_ffi_live_mode(hlm_ffi_client *c);
 const char *hlm_ffi_metadata(hlm_ffi_client *c, const char *key);
 int hlm_ffi_last_http_status(hlm_ffi_client *c);
 const char *hlm_ffi_last_error_detail(hlm_ffi_client *c);
+int hlm_ffi_last_network_failure(hlm_ffi_client *c);
+int hlm_ffi_import_license(hlm_ffi_client *c, const char *document);
+const char *hlm_ffi_license_path(hlm_ffi_client *c);
 
 const char *hlm_ffi_err_name(int err);
 int hlm_ffi_machine_id(char *out, int cap);

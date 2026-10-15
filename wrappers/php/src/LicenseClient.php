@@ -8,6 +8,9 @@ namespace Hymma\Licensing;
 require_once __DIR__ . '/LicenseStatus.php';
 require_once __DIR__ . '/SignedFormat.php';
 require_once __DIR__ . '/Native.php';
+require_once __DIR__ . '/NetworkFailure.php';
+require_once __DIR__ . '/LicenseImportOutcome.php';
+require_once __DIR__ . '/LicenseImportResult.php';
 require_once __DIR__ . '/LicenseException.php';
 
 /**
@@ -122,10 +125,73 @@ class LicenseClient
             $detail = Native::str(
                 Native::get()->hlm_ffi_last_error_detail($this->h())
             );
-            throw new LicenseException($err, $detail);
+            throw new LicenseException(
+                $err,
+                $detail,
+                $err === LicenseException::NETWORK_FAILURE
+                    ? $this->lastNetworkFailure()
+                    : NetworkFailure::None
+            );
         }
 
         return $this->status();
+    }
+
+    /**
+     * Install a signed license the user obtained outside the online flow
+     * (vendor portal, email) on a computer that cannot reach the server. It
+     * is verified exactly as the offline cache is — vendor signature,
+     * product, this computer — before it replaces anything, so a wrong or
+     * tampered file never displaces a working one. Never touches the network.
+     *
+     * @throws LicenseException only for misuse (e.g. a client without a license path)
+     */
+    public function importLicense(string $document): LicenseImportResult
+    {
+        $r = Native::get()->hlm_ffi_import_license($this->h(), $document);
+        $outcome = LicenseImportOutcome::tryFrom($r);
+        if ($outcome === null) {
+            throw new LicenseException($r);
+        }
+
+        return new LicenseImportResult(
+            $outcome,
+            Native::str(Native::get()->hlm_ffi_last_error_detail($this->h())),
+            $outcome === LicenseImportOutcome::Installed ? $this->licensePath() : null
+        );
+    }
+
+    /** Read, verify and install the license file at $path. */
+    public function importLicenseFile(string $path): LicenseImportResult
+    {
+        $document = @file_get_contents($path);
+        if ($document === false) {
+            $why = error_get_last()['message'] ?? 'unreadable';
+
+            return new LicenseImportResult(
+                LicenseImportOutcome::NotALicenseFile,
+                "The file could not be read: {$why}"
+            );
+        }
+
+        return $this->importLicense($document);
+    }
+
+    /**
+     * Why the server could not be reached on the last call. Also set when
+     * check() succeeded from the cached file because the network failed.
+     */
+    public function lastNetworkFailure(): NetworkFailure
+    {
+        return NetworkFailure::tryFrom(
+            Native::get()->hlm_ffi_last_network_failure($this->h())
+        ) ?? NetworkFailure::Unknown;
+    }
+
+    /** The license cache file this client reads and writes ('' when none). */
+    public function licensePath(): string
+    {
+        return Native::str(Native::get()->hlm_ffi_license_path($this->h()));
     }
 
     // -- operations ------------------------------------------------------ //

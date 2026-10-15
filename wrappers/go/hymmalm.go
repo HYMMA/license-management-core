@@ -43,6 +43,7 @@ import "C"
 
 import (
 	"errors"
+	"os"
 	"time"
 	"unsafe"
 )
@@ -110,15 +111,67 @@ const (
 	ErrPlanLimitReached     = -15
 )
 
+// NetworkFailure says why the license server could not be reached
+// (native hlm_net_failure; the .NET SDK's NetworkFailureReason).
+type NetworkFailure int
+
+const (
+	NetworkNone             NetworkFailure = 0 // no transport failure
+	NetworkUnknown          NetworkFailure = 1 // failed; cause undetermined
+	NetworkNameResolution   NetworkFailure = 2 // DNS returned no address (company DNS filter)
+	NetworkSecureConnection NetworkFailure = 3 // TLS handshake / certificate failure
+	NetworkProxy            NetworkFailure = 4 // proxy refused, failed, or demanded auth (407)
+	NetworkTimeout          NetworkFailure = 5 // no answer in time
+	NetworkConnection       NetworkFailure = 6 // address found; refused or dropped
+)
+
+// String returns the .NET-compatible name ("NameResolution", ...).
+func (f NetworkFailure) String() string {
+	return C.GoString(C.hlm_ffi_network_failure_name(C.int(f)))
+}
+
+// ImportOutcome is the result of Client.ImportLicense (native
+// hlm_import_result; the .NET SDK's LicenseImportOutcome).
+type ImportOutcome int
+
+const (
+	ImportInstalled        ImportOutcome = 0 // verified and installed
+	ImportNotALicenseFile  ImportOutcome = 1 // not a license this library reads
+	ImportNoPublicKey      ImportOutcome = 2 // no vendor key to verify with
+	ImportSignatureInvalid ImportOutcome = 3 // altered, or another vendor's file
+	ImportWrongProduct     ImportOutcome = 4 // issued for a different product
+	ImportWrongComputer    ImportOutcome = 5 // issued for a different computer
+	ImportWriteFailed      ImportOutcome = 6 // could not write the license path
+)
+
+// String returns the .NET-compatible name ("Installed", ...).
+func (o ImportOutcome) String() string {
+	return C.GoString(C.hlm_ffi_import_result_name(C.int(o)))
+}
+
+// ImportResult says what happened to an imported license file, with a
+// message written for the end user.
+type ImportResult struct {
+	Outcome       ImportOutcome
+	Message       string
+	InstalledPath string // where the file now lives, when installed
+}
+
+// Succeeded reports whether the file was installed.
+func (r ImportResult) Succeeded() bool { return r.Outcome == ImportInstalled }
+
 // Error is returned when the native core reports an error. Code is one of
 // the Err* constants; Detail carries the server's human-readable refusal
-// reason when it sent one. Check for it with errors.As:
+// reason when it sent one — or, for ErrNetworkFailure, a message saying
+// what failed and naming the host to allow, with the cause in
+// NetworkFailure. Check for it with errors.As:
 //
 //	var lerr *hymmalm.Error
 //	if errors.As(err, &lerr) && lerr.Code == hymmalm.ErrInvalidAPIKey { ... }
 type Error struct {
-	Code   int
-	Detail string
+	Code           int
+	Detail         string
+	NetworkFailure NetworkFailure
 }
 
 func (e *Error) Error() string {
@@ -327,9 +380,62 @@ func (c *Client) Close() {
 func (c *Client) op(r C.int) (Status, error) {
 	if r != 0 {
 		detail := goStr(C.hlm_ffi_last_error_detail(c.h))
-		return c.Status(), &Error{Code: int(r), Detail: detail}
+		failure := NetworkNone
+		if int(r) == ErrNetworkFailure {
+			failure = c.LastNetworkFailure()
+		}
+		return c.Status(), &Error{Code: int(r), Detail: detail, NetworkFailure: failure}
 	}
 	return c.Status(), nil
+}
+
+// LastNetworkFailure says why the server could not be reached on the last
+// call. It is also set when Check succeeded from the cached file because
+// the network failed — a UI can then offer ImportLicenseFile.
+func (c *Client) LastNetworkFailure() NetworkFailure {
+	return NetworkFailure(C.hlm_ffi_last_network_failure(c.h))
+}
+
+// LicensePath returns the license cache file this client reads and writes
+// ("" when none) — for a host UI to show where the license lives.
+func (c *Client) LicensePath() string {
+	return goStr(C.hlm_ffi_license_path(c.h))
+}
+
+// ImportLicense installs a signed license the user obtained outside the
+// online flow (vendor portal, email) on a computer that cannot reach the
+// server. It is verified exactly as the offline cache is — vendor
+// signature, product, this computer — before it replaces anything, so a
+// wrong or tampered file never displaces a working one. It never touches
+// the network. The error is non-nil only for misuse (e.g. a client
+// without LicensePath).
+func (c *Client) ImportLicense(document string) (ImportResult, error) {
+	cDoc := C.CString(document)
+	defer C.free(unsafe.Pointer(cDoc))
+	r := int(C.hlm_ffi_import_license(c.h, cDoc))
+	if r < 0 {
+		return ImportResult{Outcome: ImportNotALicenseFile}, &Error{Code: r}
+	}
+	res := ImportResult{
+		Outcome: ImportOutcome(r),
+		Message: goStr(C.hlm_ffi_last_error_detail(c.h)),
+	}
+	if res.Outcome == ImportInstalled {
+		res.InstalledPath = c.LicensePath()
+	}
+	return res, nil
+}
+
+// ImportLicenseFile reads, verifies and installs the license file at path.
+func (c *Client) ImportLicenseFile(path string) (ImportResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ImportResult{
+			Outcome: ImportNotALicenseFile,
+			Message: "The file could not be read: " + err.Error(),
+		}, nil
+	}
+	return c.ImportLicense(string(data))
 }
 
 // Check performs the silent check; on a fresh machine it also

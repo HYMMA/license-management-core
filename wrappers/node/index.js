@@ -27,6 +27,7 @@
  */
 
 const koffi = require('koffi');
+const fs = require('node:fs');
 const path = require('node:path');
 
 /* Native int64 sentinel HLM_TIME_NONE is INT64_MIN; koffi hands int64
@@ -68,6 +69,30 @@ const LicenseErrorCode = Object.freeze({
   TrialQuotaExceeded: -13,
   PaidFormatRequired: -14,
   PlanLimitReached: -15,
+});
+
+/** Why the license server could not be reached (native hlm_net_failure;
+ *  the .NET SDK's NetworkFailureReason). */
+const NetworkFailure = Object.freeze({
+  None: 0,
+  Unknown: 1,
+  NameResolution: 2,   // DNS returned no address (company DNS filter)
+  SecureConnection: 3, // TLS handshake / certificate failure
+  Proxy: 4,            // proxy refused, failed, or demanded auth (407)
+  Timeout: 5,
+  Connection: 6,       // address found; connection refused or dropped
+});
+
+/** Outcome of LicenseClient#importLicense (native hlm_import_result;
+ *  the .NET SDK's LicenseImportOutcome). */
+const LicenseImportOutcome = Object.freeze({
+  Installed: 0,
+  NotALicenseFile: 1,
+  NoPublicKey: 2,
+  SignatureInvalid: 3,
+  WrongProduct: 4,
+  WrongComputer: 5,
+  WriteFailed: 6,
 });
 
 /* ---------------------------------------------------------------------- */
@@ -144,6 +169,12 @@ function native() {
       'int hlm_ffi_last_http_status(hlm_ffi_client *c)'),
     lastErrorDetail: lib.func(
       'const char *hlm_ffi_last_error_detail(hlm_ffi_client *c)'),
+    lastNetworkFailure: lib.func(
+      'int hlm_ffi_last_network_failure(hlm_ffi_client *c)'),
+    importLicense: lib.func(
+      'int hlm_ffi_import_license(hlm_ffi_client *c, const char *document)'),
+    licensePath: lib.func(
+      'const char *hlm_ffi_license_path(hlm_ffi_client *c)'),
     errName: lib.func('const char *hlm_ffi_err_name(int err)'),
     machineId: lib.func('int hlm_ffi_machine_id(uint8_t *out, int cap)'),
     machineName: lib.func('int hlm_ffi_machine_name(uint8_t *out, int cap)'),
@@ -162,15 +193,18 @@ function native() {
 /**
  * Thrown when the native core reports an error. `code` is the
  * LicenseErrorCode; `detail` carries the server's human-readable
- * refusal reason when it sent one.
+ * refusal reason when it sent one — or, for NetworkFailure, a message that
+ * says what failed and names the host to allow, with the cause in
+ * `networkFailure`.
  */
 class LicenseError extends Error {
-  constructor(code, detail = '') {
+  constructor(code, detail = '', networkFailure = NetworkFailure.None) {
     const name = native().errName(code);
     super(detail ? `${name}: ${detail}` : name);
     this.name = 'LicenseError';
     this.code = code;
     this.detail = detail;
+    this.networkFailure = networkFailure;
   }
 }
 
@@ -282,9 +316,58 @@ class LicenseClient {
   _guard(err) {
     if (err !== 0) {
       const detail = native().lastErrorDetail(this._handle) || '';
-      throw new LicenseError(err, detail);
+      const failure = err === LicenseErrorCode.NetworkFailure
+        ? this.lastNetworkFailure : NetworkFailure.None;
+      throw new LicenseError(err, detail, failure);
     }
     return this.status;
+  }
+
+  /**
+   * Install a signed license the user obtained outside the online flow
+   * (vendor portal, email) on a computer that cannot reach the server.
+   * Verified exactly as the offline cache is — vendor signature, product,
+   * this computer — before it replaces anything, so a wrong or tampered
+   * file never displaces a working one. Never touches the network.
+   * @returns {{outcome:number, succeeded:boolean, message:string, installedPath:(string|null)}}
+   */
+  importLicense(document) {
+    const r = native().importLicense(this._handle, document);
+    if (r < 0) throw new LicenseError(r);
+    return {
+      outcome: r,
+      succeeded: r === LicenseImportOutcome.Installed,
+      message: native().lastErrorDetail(this._handle) || '',
+      installedPath: r === LicenseImportOutcome.Installed ? this.licensePath : null,
+    };
+  }
+
+  /** Read, verify and install the license file at `filePath`. */
+  importLicenseFile(filePath) {
+    let document;
+    try {
+      document = fs.readFileSync(filePath, 'utf8');
+    } catch (e) {
+      return {
+        outcome: LicenseImportOutcome.NotALicenseFile,
+        succeeded: false,
+        message: `The file could not be read: ${e.message}`,
+        installedPath: null,
+      };
+    }
+    return this.importLicense(document);
+  }
+
+  /** Why the server could not be reached on the last call (NetworkFailure);
+   *  also set when check() succeeded from the cached file because the
+   *  network failed. */
+  get lastNetworkFailure() {
+    return native().lastNetworkFailure(this._handle);
+  }
+
+  /** The license cache file this client reads and writes ('' when none). */
+  get licensePath() {
+    return native().licensePath(this._handle) || '';
   }
 
   /* -- operations ------------------------------------------------------ */
@@ -358,6 +441,8 @@ module.exports = {
   SignedFormat,
   LicenseErrorCode,
   LicenseError,
+  NetworkFailure,
+  LicenseImportOutcome,
   machineId,
   machineName,
   verify,

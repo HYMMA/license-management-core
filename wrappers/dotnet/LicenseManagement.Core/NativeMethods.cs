@@ -79,6 +79,20 @@ namespace LicenseManagement.Core
         internal static extern IntPtr hlm_ffi_last_error_detail(IntPtr client);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int hlm_ffi_last_network_failure(IntPtr client);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int hlm_ffi_import_license(IntPtr client,
+            [MarshalAs(LPUTF8Str)] string document);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int hlm_ffi_import_license_file(IntPtr client,
+            [MarshalAs(LPUTF8Str)] string path);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr hlm_ffi_license_path(IntPtr client);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr hlm_ffi_err_name(int err);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

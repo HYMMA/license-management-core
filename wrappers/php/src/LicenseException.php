@@ -31,9 +31,20 @@ class LicenseException extends \RuntimeException
 
     public readonly string $detail;
 
-    public function __construct(int $code, string $detail = '')
-    {
+    /**
+     * For NETWORK_FAILURE: what failed (DNS, TLS, proxy, timeout,
+     * connection), so a UI can offer the right way out — e.g.
+     * LicenseClient::importLicenseFile(). $detail then names the host to allow.
+     */
+    public readonly NetworkFailure $networkFailure;
+
+    public function __construct(
+        int $code,
+        string $detail = '',
+        NetworkFailure $networkFailure = NetworkFailure::None,
+    ) {
         $this->detail = $detail;
+        $this->networkFailure = $networkFailure;
         $name = Native::errName($code);
         parent::__construct($detail !== '' ? "{$name}: {$detail}" : $name, $code);
     }

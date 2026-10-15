@@ -39,6 +39,9 @@ __all__ = [
     "SignedFormat",
     "LicenseErrorCode",
     "LicenseError",
+    "NetworkFailure",
+    "LicenseImportOutcome",
+    "LicenseImportResult",
     "machine_id",
     "machine_name",
     "verify",
@@ -87,20 +90,68 @@ class LicenseErrorCode(enum.IntEnum):
     PLAN_LIMIT_REACHED = -15
 
 
+class NetworkFailure(enum.IntEnum):
+    """Why the license server could not be reached (native hlm_net_failure;
+    the .NET SDK's NetworkFailureReason)."""
+
+    NONE = 0
+    UNKNOWN = 1
+    NAME_RESOLUTION = 2    # DNS returned no address (company DNS filter)
+    SECURE_CONNECTION = 3  # TLS handshake / certificate failure
+    PROXY = 4              # proxy refused, failed, or demanded auth (407)
+    TIMEOUT = 5
+    CONNECTION = 6         # address found; connection refused or dropped
+
+
+class LicenseImportOutcome(enum.IntEnum):
+    """Outcome of LicenseClient.import_license (native hlm_import_result;
+    the .NET SDK's LicenseImportOutcome)."""
+
+    INSTALLED = 0
+    NOT_A_LICENSE_FILE = 1
+    NO_PUBLIC_KEY = 2
+    SIGNATURE_INVALID = 3
+    WRONG_PRODUCT = 4
+    WRONG_COMPUTER = 5
+    WRITE_FAILED = 6
+
+
+class LicenseImportResult:
+    """What happened to an imported license file, with a message written
+    for the end user."""
+
+    def __init__(self, outcome: LicenseImportOutcome, message: str,
+                 installed_path: Optional[str] = None):
+        self.outcome = outcome
+        self.message = message
+        self.installed_path = installed_path
+
+    @property
+    def succeeded(self) -> bool:
+        return self.outcome == LicenseImportOutcome.INSTALLED
+
+    def __repr__(self) -> str:
+        return f"LicenseImportResult({self.outcome.name}, {self.message!r})"
+
+
 class LicenseError(Exception):
     """Raised when the native core reports an error.
 
     ``code`` is the :class:`LicenseErrorCode`; ``detail`` carries the
-    server's human-readable refusal reason when it sent one.
+    server's human-readable refusal reason when it sent one — or, for
+    NETWORK_FAILURE, a message that says what failed and names the host to
+    allow, with the cause in ``network_failure``.
     """
 
-    def __init__(self, code: int, detail: str = ""):
+    def __init__(self, code: int, detail: str = "",
+                 network_failure: "NetworkFailure" = NetworkFailure.NONE):
         self.native_code = code
         try:
             self.code: Optional[LicenseErrorCode] = LicenseErrorCode(code)
         except ValueError:
             self.code = None
         self.detail = detail
+        self.network_failure = network_failure
         name = (_lib().hlm_ffi_err_name(code) or b"").decode()
         super().__init__(f"{name}: {detail}" if detail else name)
 
@@ -164,14 +215,16 @@ def _bind(lib: ctypes.CDLL) -> None:
     lib.hlm_ffi_destroy.argtypes = [c_p]
     for fn in ("hlm_ffi_check", "hlm_ffi_deactivate", "hlm_ffi_refresh",
                "hlm_ffi_status", "hlm_ffi_live_mode",
-               "hlm_ffi_last_http_status"):
+               "hlm_ffi_last_http_status", "hlm_ffi_last_network_failure"):
         getattr(lib, fn).restype = c_i
         getattr(lib, fn).argtypes = [c_p]
     lib.hlm_ffi_activate.restype = c_i
     lib.hlm_ffi_activate.argtypes = [c_p, c_s]
+    lib.hlm_ffi_import_license.restype = c_i
+    lib.hlm_ffi_import_license.argtypes = [c_p, c_s]
     for fn in ("hlm_ffi_status_name", "hlm_ffi_license_id",
                "hlm_ffi_product_name", "hlm_ffi_buyer_email",
-               "hlm_ffi_last_error_detail"):
+               "hlm_ffi_last_error_detail", "hlm_ffi_license_path"):
         getattr(lib, fn).restype = c_s
         getattr(lib, fn).argtypes = [c_p]
     for fn in ("hlm_ffi_expires", "hlm_ffi_trial_end",
@@ -312,7 +365,10 @@ class LicenseClient:
     def _guard(self, err: int) -> LicenseStatus:
         if err != 0:
             detail = (_lib().hlm_ffi_last_error_detail(self._handle) or b"").decode()
-            raise LicenseError(err, detail)
+            failure = (self.last_network_failure
+                       if err == LicenseErrorCode.NETWORK_FAILURE
+                       else NetworkFailure.NONE)
+            raise LicenseError(err, detail, failure)
         return self.status
 
     # -- operations ----------------------------------------------------- #
@@ -333,6 +389,46 @@ class LicenseClient:
     def refresh(self) -> LicenseStatus:
         """Fetch a fresh signed license, ignoring the cache."""
         return self._guard(_lib().hlm_ffi_refresh(self._handle))
+
+    def import_license(self, document: str) -> LicenseImportResult:
+        """Install a signed license the user obtained outside the online
+        flow (vendor portal, email) on a computer that cannot reach the
+        server. Verified exactly as the offline cache is -- vendor
+        signature, product, this computer -- before it replaces anything,
+        so a wrong or tampered file never displaces a working one. Never
+        touches the network."""
+        r = _lib().hlm_ffi_import_license(self._handle, _enc(document))
+        if r < 0:
+            raise LicenseError(r)
+        outcome = LicenseImportOutcome(r)
+        message = (_lib().hlm_ffi_last_error_detail(self._handle) or b"").decode()
+        return LicenseImportResult(
+            outcome, message,
+            self.license_path if outcome == LicenseImportOutcome.INSTALLED
+            else None)
+
+    def import_license_file(self, path: str) -> LicenseImportResult:
+        """Read, verify and install the license file at ``path``."""
+        try:
+            with open(os.path.expanduser(path), "r", encoding="utf-8-sig") as f:
+                document = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            return LicenseImportResult(LicenseImportOutcome.NOT_A_LICENSE_FILE,
+                                       f"The file could not be read: {e}")
+        return self.import_license(document)
+
+    @property
+    def last_network_failure(self) -> NetworkFailure:
+        """Why the server could not be reached on the last call; also set
+        when check() succeeded from the cached file because the network
+        failed."""
+        return NetworkFailure(_lib().hlm_ffi_last_network_failure(self._handle))
+
+    @property
+    def license_path(self) -> str:
+        """The license cache file this client reads and writes ("" when
+        none) -- for a host UI to show where the license lives."""
+        return (_lib().hlm_ffi_license_path(self._handle) or b"").decode()
 
     # -- state ----------------------------------------------------------- #
 

@@ -124,6 +124,12 @@ final class Native {
             FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private static final MethodHandle LAST_ERROR_DETAIL = down("hlm_ffi_last_error_detail",
             FunctionDescriptor.of(ADDRESS, ADDRESS));
+    private static final MethodHandle LAST_NETWORK_FAILURE = down("hlm_ffi_last_network_failure",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private static final MethodHandle IMPORT_LICENSE = down("hlm_ffi_import_license",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private static final MethodHandle LICENSE_PATH = down("hlm_ffi_license_path",
+            FunctionDescriptor.of(ADDRESS, ADDRESS));
     private static final MethodHandle ERR_NAME = down("hlm_ffi_err_name",
             FunctionDescriptor.of(ADDRESS, JAVA_INT));
     private static final MethodHandle MACHINE_ID = down("hlm_ffi_machine_id",
@@ -314,6 +320,30 @@ final class Native {
     static String lastErrorDetail(MemorySegment c) {
         try {
             return str((MemorySegment) LAST_ERROR_DETAIL.invokeExact(c));
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static int lastNetworkFailure(MemorySegment c) {
+        try {
+            return (int) LAST_NETWORK_FAILURE.invokeExact(c);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static int importLicense(MemorySegment c, String document) {
+        try (Arena a = Arena.ofConfined()) {
+            return (int) IMPORT_LICENSE.invokeExact(c, cstr(a, document));
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static String licensePath(MemorySegment c) {
+        try {
+            return str((MemorySegment) LICENSE_PATH.invokeExact(c));
         } catch (Throwable t) {
             throw rethrow(t);
         }

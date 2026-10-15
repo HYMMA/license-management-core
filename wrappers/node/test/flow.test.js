@@ -92,7 +92,8 @@ const assert = require('node:assert');
 const os = require('node:os');
 
 const {
-  LicenseClient, LicenseError, LicenseErrorCode, LicenseStatus, SignedFormat,
+  LicenseClient, LicenseError, LicenseErrorCode, LicenseImportOutcome,
+  LicenseStatus, NetworkFailure, SignedFormat,
 } = require('../index.js');
 
 const PRODUCT = 'PRD_01KWWPEPM0N070BDAHJ7G09RGV';
@@ -228,8 +229,76 @@ test('offline without cache reports network failure', () => {
     assert.throws(
       () => c.check(),
       (err) => err instanceof LicenseError &&
-               err.code === LicenseErrorCode.NetworkFailure);
+               err.code === LicenseErrorCode.NetworkFailure &&
+               // ...and says what failed, naming the host to allow
+               err.networkFailure === NetworkFailure.Connection &&
+               err.detail.startsWith('Could not connect to 127.0.0.1.'));
+    assert.strictEqual(c.lastNetworkFailure, NetworkFailure.Connection);
   } finally {
     c.close();
+  }
+});
+
+test('a proxy 407 reports Proxy', async () => {
+  await setState({ failStatus: 407, failBody: '' });
+  const c = client();
+  try {
+    assert.throws(
+      () => c.check(),
+      (err) => err instanceof LicenseError &&
+               err.code === LicenseErrorCode.NetworkFailure &&
+               err.networkFailure === NetworkFailure.Proxy);
+  } finally {
+    c.close();
+  }
+});
+
+test('import: genuine file installs, refusals leave the cache', () => {
+  const cache = path.join(tmpDir, 'import-cache.lic');
+  const trial = CASES['rs256-trial-valid'];
+  const paid = CASES['rs256-paid-valid'];
+  fs.writeFileSync(cache, trial);
+  const dead = 'http://127.0.0.1:1/api/';
+
+  const c = client({ baseUrl: dead, licensePath: cache });
+  try {
+    assert.strictEqual(c.licensePath, cache);
+
+    let r = c.importLicense(CASES['rs256-tampered-payload']);
+    assert.strictEqual(r.outcome, LicenseImportOutcome.SignatureInvalid);
+    assert.strictEqual(fs.readFileSync(cache, 'utf8'), trial);
+
+    r = c.importLicense('not a license at all');
+    assert.strictEqual(r.outcome, LicenseImportOutcome.NotALicenseFile);
+
+    r = c.importLicenseFile(path.join(tmpDir, 'missing.lic'));
+    assert.strictEqual(r.outcome, LicenseImportOutcome.NotALicenseFile);
+    assert.ok(r.message.startsWith('The file could not be read'), r.message);
+    assert.strictEqual(fs.readFileSync(cache, 'utf8'), trial);
+
+    const src = path.join(tmpDir, 'downloaded.lic');
+    fs.writeFileSync(src, `${paid}\r\n`);
+    r = c.importLicenseFile(src);
+    assert.ok(r.succeeded, r.message);
+    assert.strictEqual(r.message, 'License file installed.');
+    assert.strictEqual(r.installedPath, cache);
+    assert.strictEqual(c.licenseId, 'LIC_01KWVTRYMCAGWHTCVBYFGNJDA0');
+    assert.strictEqual(fs.readFileSync(cache, 'utf8'), paid);
+  } finally {
+    c.close();
+  }
+
+  const other = new LicenseClient({
+    productId: PRODUCT, clientApiKey: 'PUB_test', jwksJson: JWKS,
+    baseUrl: dead, machineId: 'OTHER' + '0'.repeat(47),
+    machineName: 'SHOP-FLOOR-01', licensePath: cache,
+  });
+  try {
+    const r = other.importLicense(trial);
+    assert.strictEqual(r.outcome, LicenseImportOutcome.WrongComputer);
+    assert.ok(r.message.includes('for the computer SHOP-FLOOR-01'), r.message);
+    assert.strictEqual(fs.readFileSync(cache, 'utf8'), paid);
+  } finally {
+    other.close();
   }
 });

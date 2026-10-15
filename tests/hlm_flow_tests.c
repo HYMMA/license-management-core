@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "hymma/hlm.h"
+#include "hymma/hlm_ffi.h"
 #include "hlm_json.h"
 
 static int failures;
@@ -140,6 +141,9 @@ typedef struct {
     int count;
     int next;
     int fail_transport; /* 1 => every send fails, steps untouched */
+    hlm_net_failure net_failure; /* cause a failing transport reports;
+                                    HLM_NET_NONE => leave the client's preset */
+    int sends;          /* every send, including failed ones */
 } mock_http;
 
 static int mock_send(void *user, const hlm_http_request *req,
@@ -150,7 +154,11 @@ static int mock_send(void *user, const hlm_http_request *req,
     size_t base_len = strlen(BASE_URL);
     size_t len;
 
-    if (m->fail_transport) return HLM_E_HTTP;
+    m->sends++;
+    if (m->fail_transport) {
+        if (m->net_failure != HLM_NET_NONE) resp->failure = m->net_failure;
+        return HLM_E_HTTP;
+    }
 
     checks++;
     if (m->next >= m->count) {
@@ -203,6 +211,7 @@ typedef struct {
     char data[8192];
     size_t len;
     int writes;
+    int fail_write; /* 1 => every write fails (disk full, read-only folder) */
 } mock_store;
 
 static int store_read(void *user, char *buf, size_t cap)
@@ -217,6 +226,7 @@ static int store_read(void *user, char *buf, size_t cap)
 static int store_write(void *user, const char *data, size_t len)
 {
     mock_store *s = (mock_store *)user;
+    if (s->fail_write) return HLM_E_STORAGE;
     if (len >= sizeof(s->data)) return HLM_E_STORAGE;
     memcpy(s->data, data, len);
     s->data[len] = '\0';
@@ -728,6 +738,558 @@ static void test_server_time_fallback(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* network diagnosis                                                   */
+/* ------------------------------------------------------------------ */
+
+/* Expected messages are the .NET SDK's NetworkUnavailableException.MessageFor
+ * wording (LicenseManagement.EndUser 3.5.0), with host = api.test. */
+#define MSG_DNS                                                              \
+    "This computer's network could not find api.test. A company DNS filter " \
+    "or firewall is probably blocking it. Ask your IT team to allow "        \
+    "api.test, or install the license file by hand."
+#define MSG_TLS                                                              \
+    "A secure connection to api.test could not be set up. A proxy or "       \
+    "security product may be inspecting HTTPS traffic. Ask your IT team to " \
+    "allow api.test, or install the license file by hand."
+#define MSG_PROXY                                                            \
+    "The network proxy refused the connection to api.test. Ask your IT "     \
+    "team to allow api.test, or install the license file by hand."
+#define MSG_TIMEOUT                                                          \
+    "api.test did not answer in time. The network may be slow or blocking "  \
+    "it. Try again, or install the license file by hand."
+#define MSG_CONNECT                                                          \
+    "Could not connect to api.test. Check the internet connection and "      \
+    "firewall, or install the license file by hand."
+
+/* WinHTTP / Winsock error numbers -> cause (values from winhttp.h/winerror.h) */
+static void test_net_failure_from_winhttp(void)
+{
+    CHECK(hlm_net_failure_from_winhttp(12007) == HLM_NET_NAME_RESOLUTION,
+          "winhttp 12007 NAME_NOT_RESOLVED -> DNS");
+    CHECK(hlm_net_failure_from_winhttp(11004) == HLM_NET_NAME_RESOLUTION,
+          "winsock 11004 WSANO_DATA (the reviewer's error) -> DNS");
+    CHECK(hlm_net_failure_from_winhttp(11001) == HLM_NET_NAME_RESOLUTION,
+          "winsock 11001 WSAHOST_NOT_FOUND -> DNS");
+    CHECK(hlm_net_failure_from_winhttp(12175) == HLM_NET_SECURE_CONNECTION,
+          "winhttp 12175 SECURE_FAILURE -> TLS");
+    CHECK(hlm_net_failure_from_winhttp(12157) == HLM_NET_SECURE_CONNECTION,
+          "winhttp 12157 SECURE_CHANNEL_ERROR -> TLS");
+    CHECK(hlm_net_failure_from_winhttp(12045) == HLM_NET_SECURE_CONNECTION,
+          "winhttp 12045 SECURE_INVALID_CA (inspecting proxy) -> TLS");
+    CHECK(hlm_net_failure_from_winhttp(12002) == HLM_NET_TIMEOUT,
+          "winhttp 12002 TIMEOUT -> timeout");
+    CHECK(hlm_net_failure_from_winhttp(12029) == HLM_NET_CONNECTION,
+          "winhttp 12029 CANNOT_CONNECT -> connection");
+    CHECK(hlm_net_failure_from_winhttp(12030) == HLM_NET_CONNECTION,
+          "winhttp 12030 CONNECTION_ERROR -> connection");
+    CHECK(hlm_net_failure_from_winhttp(12167) == HLM_NET_PROXY,
+          "winhttp 12167 UNABLE_TO_DOWNLOAD_SCRIPT (PAC) -> proxy");
+    CHECK(hlm_net_failure_from_winhttp(12180) == HLM_NET_PROXY,
+          "winhttp 12180 AUTODETECTION_FAILED (WPAD) -> proxy");
+    CHECK(hlm_net_failure_from_winhttp(0) == HLM_NET_UNKNOWN,
+          "winhttp 0 -> unknown");
+    CHECK(hlm_net_failure_from_winhttp(5) == HLM_NET_UNKNOWN,
+          "winhttp 5 ACCESS_DENIED -> unknown");
+}
+
+/* CURLcode -> cause (values from curl.h) */
+static void test_net_failure_from_curl(void)
+{
+    CHECK(hlm_net_failure_from_curl(6) == HLM_NET_NAME_RESOLUTION,
+          "curl 6 COULDNT_RESOLVE_HOST -> DNS");
+    CHECK(hlm_net_failure_from_curl(5) == HLM_NET_PROXY,
+          "curl 5 COULDNT_RESOLVE_PROXY -> proxy");
+    CHECK(hlm_net_failure_from_curl(97) == HLM_NET_PROXY, "curl 97 PROXY -> proxy");
+    CHECK(hlm_net_failure_from_curl(7) == HLM_NET_CONNECTION,
+          "curl 7 COULDNT_CONNECT -> connection");
+    CHECK(hlm_net_failure_from_curl(56) == HLM_NET_CONNECTION,
+          "curl 56 RECV_ERROR -> connection");
+    CHECK(hlm_net_failure_from_curl(28) == HLM_NET_TIMEOUT,
+          "curl 28 OPERATION_TIMEDOUT -> timeout");
+    CHECK(hlm_net_failure_from_curl(35) == HLM_NET_SECURE_CONNECTION,
+          "curl 35 SSL_CONNECT_ERROR -> TLS");
+    CHECK(hlm_net_failure_from_curl(60) == HLM_NET_SECURE_CONNECTION,
+          "curl 60 PEER_FAILED_VERIFICATION -> TLS");
+    CHECK(hlm_net_failure_from_curl(0) == HLM_NET_UNKNOWN, "curl 0 -> unknown");
+    CHECK(hlm_net_failure_from_curl(1) == HLM_NET_UNKNOWN,
+          "curl 1 UNSUPPORTED_PROTOCOL -> unknown");
+}
+
+static void test_net_messages(void)
+{
+    char msg[512], tiny[16];
+
+    CHECK(hlm_net_message(HLM_NET_NAME_RESOLUTION, "api.test", msg,
+                          sizeof(msg)) == HLM_OK &&
+              strcmp(msg, MSG_DNS) == 0,
+          "net message: DNS names the host to allow");
+    CHECK(hlm_net_message(HLM_NET_SECURE_CONNECTION, "api.test", msg,
+                          sizeof(msg)) == HLM_OK &&
+              strcmp(msg, MSG_TLS) == 0,
+          "net message: TLS");
+    CHECK(hlm_net_message(HLM_NET_PROXY, "api.test", msg, sizeof(msg)) ==
+                  HLM_OK &&
+              strcmp(msg, MSG_PROXY) == 0,
+          "net message: proxy");
+    CHECK(hlm_net_message(HLM_NET_TIMEOUT, "api.test", msg, sizeof(msg)) ==
+                  HLM_OK &&
+              strcmp(msg, MSG_TIMEOUT) == 0,
+          "net message: timeout");
+    CHECK(hlm_net_message(HLM_NET_CONNECTION, "api.test", msg, sizeof(msg)) ==
+                  HLM_OK &&
+              strcmp(msg, MSG_CONNECT) == 0,
+          "net message: connection");
+    CHECK(hlm_net_message(HLM_NET_UNKNOWN, "api.test", msg, sizeof(msg)) ==
+                  HLM_OK &&
+              strcmp(msg, MSG_CONNECT) == 0,
+          "net message: unknown reads as could-not-connect");
+    CHECK(hlm_net_message(HLM_NET_NAME_RESOLUTION, "api.test", tiny,
+                          sizeof(tiny)) == HLM_E_BUFFER &&
+              strlen(tiny) == sizeof(tiny) - 1,
+          "net message: truncation reported, still terminated");
+
+    CHECK(strcmp(hlm_net_failure_str(HLM_NET_NAME_RESOLUTION),
+                 "NameResolution") == 0 &&
+              strcmp(hlm_net_failure_str(HLM_NET_SECURE_CONNECTION),
+                     "SecureConnection") == 0 &&
+              strcmp(hlm_net_failure_str(HLM_NET_PROXY), "Proxy") == 0 &&
+              strcmp(hlm_net_failure_str(HLM_NET_TIMEOUT), "Timeout") == 0 &&
+              strcmp(hlm_net_failure_str(HLM_NET_CONNECTION), "Connection") == 0 &&
+              strcmp(hlm_net_failure_str(HLM_NET_UNKNOWN), "Unknown") == 0 &&
+              strcmp(hlm_net_failure_str(HLM_NET_NONE), "None") == 0,
+          "net failure names match the .NET NetworkFailureReason");
+}
+
+/* The transport's cause reaches the caller: HLM_E_HTTP still, plus the
+ * reason and a message naming the host, for every cause. */
+static void test_transport_failure_is_explained(void)
+{
+    static const struct {
+        hlm_net_failure port_says;
+        hlm_net_failure expect;
+        const char *message;
+    } cases[] = {
+        { HLM_NET_NAME_RESOLUTION, HLM_NET_NAME_RESOLUTION, MSG_DNS },
+        { HLM_NET_SECURE_CONNECTION, HLM_NET_SECURE_CONNECTION, MSG_TLS },
+        { HLM_NET_PROXY, HLM_NET_PROXY, MSG_PROXY },
+        { HLM_NET_TIMEOUT, HLM_NET_TIMEOUT, MSG_TIMEOUT },
+        { HLM_NET_CONNECTION, HLM_NET_CONNECTION, MSG_CONNECT },
+        /* a custom port that reports nothing: cause unknown, generic text */
+        { HLM_NET_NONE, HLM_NET_UNKNOWN, MSG_CONNECT },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        mock_http http = { NULL, 0, 0, 1, HLM_NET_NONE, 0 };
+        http.net_failure = cases[i].port_says;
+
+        setup(&g_client, &http, NULL, T_2026_07_10, 0, NULL, NULL);
+        CHECK(hlm_client_check(&g_client) == HLM_E_HTTP,
+              "transport failure: still HLM_E_HTTP");
+        CHECK(g_client.last_net_failure == cases[i].expect,
+              "transport failure: cause recorded");
+        if (strcmp(g_client.last_error, cases[i].message) != 0) {
+            failures++;
+            printf("FAIL transport failure message\n  want %s\n  got  %s\n",
+                   cases[i].message, g_client.last_error);
+        }
+        checks++;
+        CHECK(http.sends == 3, "transport failure: still retried 3 times");
+    }
+}
+
+/* Offline with a cached file: check() succeeds from the cache, and the
+ * cause stays visible so a UI can offer the by-hand install. */
+static void test_offline_fallback_keeps_cause(void)
+{
+    mock_http http = { NULL, 0, 0, 1, HLM_NET_NAME_RESOLUTION, 0 };
+    mock_store store = { {0}, 0, 0, 0 };
+
+    store_preload(&store, jws_trial);
+    setup(&g_client, &http, &store, T_2026_11_01, 0, NULL, NULL);
+    CHECK(hlm_client_check(&g_client) == HLM_OK, "offline fallback: ok");
+    CHECK(g_client.status == HLM_STATUS_EXPIRED, "offline fallback: Expired");
+    CHECK(g_client.last_net_failure == HLM_NET_NAME_RESOLUTION,
+          "offline fallback: DNS cause visible");
+}
+
+/* A proxy's 407 is a network refusal, not an API answer: Proxy, no retry. */
+static void test_proxy_407(void)
+{
+    const mock_step steps[] = {
+        { "POST", "computer", "", IDEM_COMPUTER, 407, "", -1 },
+    };
+    mock_http http = { steps, 1, 0, 0, HLM_NET_NONE, 0 };
+
+    setup(&g_client, &http, NULL, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_check(&g_client) == HLM_E_HTTP, "407: network error");
+    CHECK(g_client.last_net_failure == HLM_NET_PROXY, "407: proxy");
+    CHECK(strcmp(g_client.last_error, MSG_PROXY) == 0, "407: proxy message");
+    CHECK(http.next == 1 && g_sleeps == 0, "407: not retried");
+}
+
+/* A later call that reaches the server does not report the old failure. */
+static void test_success_clears_cause(void)
+{
+    const mock_step steps[] = {
+        STEP_POST_COMPUTER(201),
+        STEP_GET_COMPUTER,
+        STEP_POST_LICENSE(201),
+        STEP_GET_LICENSE(jws_trial),
+    };
+    mock_http http = { steps, 4, 0, 1, HLM_NET_TIMEOUT, 0 };
+
+    setup(&g_client, &http, NULL, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_check(&g_client) == HLM_E_HTTP, "clears: first fails");
+    CHECK(g_client.last_net_failure == HLM_NET_TIMEOUT, "clears: timeout");
+    http.fail_transport = 0;
+    CHECK(hlm_client_check(&g_client) == HLM_OK, "clears: then succeeds");
+    CHECK(g_client.last_net_failure == HLM_NET_NONE, "clears: cause cleared");
+}
+
+#if defined(_WIN32)
+/* The real WinHTTP port against causes this machine can produce on its own:
+ * nothing listens on 127.0.0.1:1, and .invalid never resolves (RFC 2606). */
+static void test_winhttp_real_causes(void)
+{
+    static const struct {
+        const char *base_url;
+        hlm_net_failure expect;
+        const char *host_in_message;
+    } cases[] = {
+        { "http://127.0.0.1:1/api/", HLM_NET_CONNECTION, "127.0.0.1" },
+        { "https://hlm-test-host.invalid/api/", HLM_NET_NAME_RESOLUTION,
+          "hlm-test-host.invalid" },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        hlm_client_cfg cfg;
+        int r;
+
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.base_url = cases[i].base_url;
+        cfg.product_id = PRODUCT_ID;
+        cfg.client_api_key = API_KEY;
+        cfg.keys = keys;
+        cfg.key_count = key_count;
+        cfg.machine_id = MACHINE_ID;
+        cfg.machine_name = MACHINE_NAME;
+        cfg.crypto = hlm_crypto_portable();
+        cfg.http = hlm_http_winhttp();
+        cfg.sleep.sleep_ms = fake_sleep;
+        CHECK(hlm_client_init(&g_client, &cfg) == HLM_OK, "winhttp: init");
+        r = hlm_client_check(&g_client);
+        CHECK(r == HLM_E_HTTP, "winhttp: transport error");
+        if (g_client.last_net_failure != cases[i].expect) {
+            failures++;
+            printf("FAIL winhttp %s: cause %s, want %s\n", cases[i].base_url,
+                   hlm_net_failure_str(g_client.last_net_failure),
+                   hlm_net_failure_str(cases[i].expect));
+        }
+        checks++;
+        CHECK(strstr(g_client.last_error, cases[i].host_in_message) != NULL,
+              "winhttp: message names the host");
+    }
+}
+#endif
+
+/* ------------------------------------------------------------------ */
+/* license file installed by hand                                      */
+/* ------------------------------------------------------------------ */
+
+static void test_import_genuine_installs(void)
+{
+    mock_store store = { {0}, 0, 0, 0 };
+
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_import(&g_client, jws_paid, strlen(jws_paid)) ==
+              HLM_IMPORT_INSTALLED,
+          "import genuine: installed");
+    CHECK(store.writes == 1 && strcmp(store.data, jws_paid) == 0,
+          "import genuine: written verbatim");
+    CHECK(g_client.has_license && g_client.status == HLM_STATUS_VALID,
+          "import genuine: adopted, Valid");
+    CHECK(strcmp(g_client.last_error, "License file installed.") == 0,
+          "import genuine: message");
+
+    /* and the next offline launch accepts what was installed */
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_check(&g_client) == HLM_OK &&
+              g_client.status == HLM_STATUS_VALID,
+          "import genuine: next launch reads it");
+}
+
+/* what a browser download / mail client wraps around the token */
+static void test_import_tolerates_bom_and_newlines(void)
+{
+    static char wrapped[8300];
+    mock_store store = { {0}, 0, 0, 0 };
+
+    snprintf(wrapped, sizeof(wrapped), "\xEF\xBB\xBF\r\n  %s\r\n\r\n", jws_paid);
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_import(&g_client, wrapped, strlen(wrapped)) ==
+              HLM_IMPORT_INSTALLED,
+          "import wrapped: installed");
+    CHECK(strcmp(store.data, jws_paid) == 0, "import wrapped: token stored");
+}
+
+/* Every refusal leaves the existing file exactly as it was. */
+static void expect_refused(const char *doc, const char *product_id,
+                           const char *machine_id, int expected,
+                           const char *msg_substr, const char *name)
+{
+    mock_store store = { {0}, 0, 0, 0 };
+    int r;
+
+    store_preload(&store, jws_trial);
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, product_id, machine_id);
+    r = hlm_client_import(&g_client, doc, strlen(doc));
+    if (r != expected) {
+        failures++;
+        printf("FAIL %s: got %s, want %s\n", name, hlm_import_result_str(r),
+               hlm_import_result_str(expected));
+    }
+    checks++;
+    CHECK(store.writes == 0 && strcmp(store.data, jws_trial) == 0,
+          "import refused: existing file untouched");
+    CHECK(!g_client.has_license, "import refused: nothing adopted");
+    if (strstr(g_client.last_error, msg_substr) == NULL) {
+        failures++;
+        printf("FAIL %s message: %s\n", name, g_client.last_error);
+    }
+    checks++;
+}
+
+static void test_import_refusals(void)
+{
+    static const char OTHER[] = "OTHERMACHINE0000000000000000000000000000000000000000";
+
+    expect_refused(jws_tampered, NULL, NULL, HLM_IMPORT_SIGNATURE_INVALID,
+                   "wasn't issued for this product's publisher, or it has "
+                   "been changed. Download it again.",
+                   "import tampered");
+    expect_refused(jws_paid, "PRD_OTHER", NULL, HLM_IMPORT_WRONG_PRODUCT,
+                   "This license file is for CADshift Nesting, not this one.",
+                   "import other product");
+    expect_refused(jws_paid, NULL, OTHER, HLM_IMPORT_WRONG_COMPUTER,
+                   "This license file is for the computer SHOP-FLOOR-01. "
+                   "Download the file for this computer.",
+                   "import other computer");
+    expect_refused("hello world, this is not a license", NULL, NULL,
+                   HLM_IMPORT_NOT_A_LICENSE,
+                   "That isn't a license file. Choose the .lic file you "
+                   "downloaded.",
+                   "import garbage");
+    expect_refused("<?xml version=\"1.0\"?><License><Id>LIC_1</Id></License>",
+                   NULL, NULL, HLM_IMPORT_NOT_A_LICENSE, "isn't a license file",
+                   "import xml license");
+    expect_refused("", NULL, NULL, HLM_IMPORT_NOT_A_LICENSE,
+                   "isn't a license file", "import empty");
+    /* JWS-shaped but its segments do not decode to a license */
+    expect_refused("aGVsbG8.d29ybGQ.c2ln", NULL, NULL, HLM_IMPORT_NOT_A_LICENSE,
+                   "isn't a license file", "import jws-shaped junk");
+}
+
+/* identity v2 machines also accept a file issued to their legacy v1 id —
+ * both on import and on the offline launch that reads it afterwards */
+static void test_import_legacy_machine_id(void)
+{
+    static const char V2[] = "V2MACHINEID00000000000000000000000000000000000000000";
+    mock_store store = { {0}, 0, 0, 0 };
+
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, NULL, V2);
+    g_client.cfg.machine_id_legacy = MACHINE_ID;
+    CHECK(hlm_client_import(&g_client, jws_paid, strlen(jws_paid)) ==
+              HLM_IMPORT_INSTALLED,
+          "import legacy id: installed");
+
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, NULL, V2);
+    g_client.cfg.machine_id_legacy = MACHINE_ID;
+    CHECK(hlm_client_check(&g_client) == HLM_OK &&
+              g_client.status == HLM_STATUS_VALID,
+          "legacy id: offline launch accepts the file");
+
+    /* without the legacy id the same file is another computer's */
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, NULL, V2);
+    CHECK(hlm_client_import(&g_client, jws_paid, strlen(jws_paid)) ==
+              HLM_IMPORT_WRONG_COMPUTER,
+          "import v2 only: wrong computer");
+}
+
+static void test_import_write_failed(void)
+{
+    mock_store store = { {0}, 0, 0, 1 /* writes fail */ };
+
+    setup(&g_client, NULL, &store, T_2026_07_10, 0, NULL, NULL);
+    CHECK(hlm_client_import(&g_client, jws_paid, strlen(jws_paid)) ==
+              HLM_IMPORT_WRITE_FAILED,
+          "import write failed: reported");
+    CHECK(!g_client.has_license, "import write failed: nothing adopted");
+    CHECK(strcmp(g_client.last_error, "The license file couldn't be saved.") == 0,
+          "import write failed: message");
+}
+
+/* the low-level entry point, for what a client cannot express */
+static void test_import_low_level(void)
+{
+    mock_store store = { {0}, 0, 0, 0 };
+    hlm_storage st;
+    hlm_crypto crypto = hlm_crypto_portable();
+    hlm_storage no_storage;
+    char es256[8192];
+    hlm_license lic;
+
+    st.read = store_read;
+    st.write = store_write;
+    st.user = &store;
+    memset(&no_storage, 0, sizeof(no_storage));
+
+    CHECK(hlm_license_import(jws_paid, strlen(jws_paid), NULL, 0, &crypto,
+                             PRODUCT_ID, MACHINE_ID, NULL, &st, NULL) ==
+              HLM_IMPORT_NO_PUBLIC_KEY,
+          "import: no public key");
+    CHECK(store.writes == 0, "import no key: nothing written");
+
+    /* signed with the vendor's EC key, but only the RSA key is trusted */
+    CHECK(get_case_jws("es256-paid-valid", es256, sizeof(es256)) == 0,
+          "import: es256 vector");
+    CHECK(hlm_license_import(es256, strlen(es256), &keys[0], 1, &crypto,
+                             PRODUCT_ID, MACHINE_ID, NULL, &st, NULL) ==
+              HLM_IMPORT_SIGNATURE_INVALID,
+          "import: key of another algorithm/vendor -> signature invalid");
+
+    CHECK(hlm_license_import(jws_paid, strlen(jws_paid), keys, key_count,
+                             &crypto, PRODUCT_ID, MACHINE_ID, NULL,
+                             &no_storage, NULL) == HLM_E_ARG,
+          "import: no storage port is a programming error");
+
+    CHECK(hlm_license_import(jws_paid, strlen(jws_paid), keys, key_count,
+                             &crypto, PRODUCT_ID, MACHINE_ID, NULL, &st,
+                             &lic) == HLM_IMPORT_INSTALLED &&
+              strcmp(lic.id, LICENSE_ID) == 0,
+          "import: installed, license returned");
+
+    CHECK(strcmp(hlm_import_result_str(HLM_IMPORT_INSTALLED), "Installed") == 0 &&
+              strcmp(hlm_import_result_str(HLM_IMPORT_NOT_A_LICENSE),
+                     "NotALicenseFile") == 0 &&
+              strcmp(hlm_import_result_str(HLM_IMPORT_NO_PUBLIC_KEY),
+                     "NoPublicKey") == 0 &&
+              strcmp(hlm_import_result_str(HLM_IMPORT_SIGNATURE_INVALID),
+                     "SignatureInvalid") == 0 &&
+              strcmp(hlm_import_result_str(HLM_IMPORT_WRONG_PRODUCT),
+                     "WrongProduct") == 0 &&
+              strcmp(hlm_import_result_str(HLM_IMPORT_WRONG_COMPUTER),
+                     "WrongComputer") == 0 &&
+              strcmp(hlm_import_result_str(HLM_IMPORT_WRITE_FAILED),
+                     "WriteFailed") == 0,
+          "import result names match the .NET LicenseImportOutcome");
+}
+
+static int read_file(const char *path, char *buf, size_t cap)
+{
+    FILE *f = fopen(path, "rb");
+    size_t n;
+    if (f == NULL) return -1;
+    n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return (int)n;
+}
+
+static int write_file(const char *path, const char *data)
+{
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) return -1;
+    fwrite(data, 1, strlen(data), f);
+    return fclose(f);
+}
+
+/* Through the FFI and the real file port: a refused file never replaces the
+ * one on disk, a genuine one does, and the path is visible to a host UI. */
+static void test_import_ffi_file(void)
+{
+    static char jwks[2048];
+    static char got[8192];
+    const char *lic_path = "hlm_import_test_cache.lic";
+    const char *src_good = "hlm_import_test_good.lic";
+    const char *src_bad = "hlm_import_test_bad.lic";
+    hlm_ffi_client *fc;
+    int t = hlm_json_member(&vec, 0, "RsaJwk");
+    size_t n = (size_t)(vec.toks[t].end - vec.toks[t].start);
+
+    memcpy(jwks, vec.src + vec.toks[t].start, n);
+    jwks[n] = '\0';
+
+    CHECK(write_file(lic_path, jws_trial) == 0, "ffi import: seed cache");
+    CHECK(write_file(src_good, jws_paid) == 0, "ffi import: seed good");
+    CHECK(write_file(src_bad, jws_tampered) == 0, "ffi import: seed bad");
+
+    fc = hlm_ffi_create(BASE_URL, PRODUCT_ID, API_KEY, jwks, 1, 0, MACHINE_ID,
+                        MACHINE_NAME, lic_path);
+    CHECK(fc != NULL, "ffi import: create");
+    if (fc == NULL) return;
+
+    CHECK(strcmp(hlm_ffi_license_path(fc), lic_path) == 0,
+          "ffi: license path exposed");
+
+    CHECK(hlm_ffi_import_license_file(fc, src_bad) ==
+              HLM_IMPORT_SIGNATURE_INVALID,
+          "ffi import tampered: refused");
+    CHECK(read_file(lic_path, got, sizeof(got)) > 0 &&
+              strcmp(got, jws_trial) == 0,
+          "ffi import tampered: cache file untouched");
+
+    CHECK(hlm_ffi_import_license_file(fc, "hlm_import_test_missing.lic") ==
+              HLM_IMPORT_NOT_A_LICENSE,
+          "ffi import missing file: not a license");
+    CHECK(strstr(hlm_ffi_last_error_detail(fc), "could not be read") != NULL,
+          "ffi import missing file: says why");
+
+    CHECK(hlm_ffi_import_license_file(fc, src_good) == HLM_IMPORT_INSTALLED,
+          "ffi import genuine: installed");
+    CHECK(read_file(lic_path, got, sizeof(got)) > 0 && strcmp(got, jws_paid) == 0,
+          "ffi import genuine: cache replaced");
+    CHECK(strcmp(hlm_ffi_last_error_detail(fc), "License file installed.") == 0,
+          "ffi import genuine: message");
+    CHECK(strcmp(hlm_ffi_import_result_name(HLM_IMPORT_INSTALLED), "Installed") == 0,
+          "ffi import result name");
+    CHECK(strcmp(hlm_ffi_license_id(fc), LICENSE_ID) == 0,
+          "ffi import genuine: license adopted");
+
+    hlm_ffi_destroy(fc);
+
+    /* a cache folder that does not exist: WriteFailed names the path */
+    fc = hlm_ffi_create(BASE_URL, PRODUCT_ID, API_KEY, jwks, 1, 0, MACHINE_ID,
+                        MACHINE_NAME, "hlm-no-such-dir/sub/cache.lic");
+    CHECK(fc != NULL, "ffi import unwritable: create");
+    if (fc != NULL) {
+        CHECK(hlm_ffi_import_license(fc, jws_paid) == HLM_IMPORT_WRITE_FAILED,
+              "ffi import unwritable: write failed");
+        CHECK(strcmp(hlm_ffi_last_error_detail(fc),
+                     "The license file couldn't be saved to "
+                     "hlm-no-such-dir/sub/cache.lic.") == 0,
+              "ffi import unwritable: message names the path");
+        hlm_ffi_destroy(fc);
+    }
+
+    /* no cache configured: nothing to install into */
+    fc = hlm_ffi_create(BASE_URL, PRODUCT_ID, API_KEY, jwks, 1, 0, MACHINE_ID,
+                        MACHINE_NAME, NULL);
+    if (fc != NULL) {
+        CHECK(hlm_ffi_import_license(fc, jws_paid) == HLM_E_ARG,
+              "ffi import without license_path: HLM_E_ARG");
+        CHECK(strcmp(hlm_ffi_license_path(fc), "") == 0,
+              "ffi: no license path");
+        hlm_ffi_destroy(fc);
+    }
+
+    remove(lic_path);
+    remove(src_good);
+    remove(src_bad);
+}
+
+/* ------------------------------------------------------------------ */
 
 int main(int argc, char **argv)
 {
@@ -771,6 +1333,25 @@ int main(int argc, char **argv)
     test_plan_limit_classified();
     test_clock_tamper_detected();
     test_server_time_fallback();
+
+    test_net_failure_from_winhttp();
+    test_net_failure_from_curl();
+    test_net_messages();
+    test_transport_failure_is_explained();
+    test_offline_fallback_keeps_cause();
+    test_proxy_407();
+    test_success_clears_cause();
+#if defined(_WIN32)
+    test_winhttp_real_causes();
+#endif
+
+    test_import_genuine_installs();
+    test_import_tolerates_bom_and_newlines();
+    test_import_refusals();
+    test_import_legacy_machine_id();
+    test_import_write_failed();
+    test_import_low_level();
+    test_import_ffi_file();
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

@@ -193,7 +193,7 @@ static int curl_send(void *user, const hlm_http_request *req,
     resp->retry_after_seconds = -1;
     resp->body_len = 0;
 
-    if (curl_load() != 0) return HLM_E_HTTP;
+    if (curl_load() != 0) return HLM_E_HTTP; /* no libcurl: cause Unknown */
 
     /* With a cache, reuse one easy handle so the repeated same-host
      * requests of a refresh share a TCP/TLS connection; reset wipes every
@@ -259,7 +259,11 @@ static int curl_send(void *user, const hlm_http_request *req,
     if (cache == NULL) g_curl.easy_cleanup(curl);
 
     if (w.overflow) return HLM_E_BUFFER;
-    if (rc != 0 || status == 0) return HLM_E_HTTP;
+    if (rc != 0) {
+        resp->failure = hlm_net_failure_from_curl(rc);
+        return HLM_E_HTTP;
+    }
+    if (status == 0) return HLM_E_HTTP;
 
     resp->status = (int)status;
     return HLM_OK;

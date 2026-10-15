@@ -235,6 +235,27 @@ that mirrors the concepts of `LicenseManagement.EndUser.Test`:
   with a verified-but-expired cache surfaces `Expired` instead of failing;
   uninstall always uses the live hardware id, never the cached file's; the
   refreshed file lands in `ReceiptUnregistered` state after deactivation.
+- **Network diagnosis** (`NetworkUnavailableException.Reason`): a transport
+  failure is still `HLM_E_HTTP`, but `last_net_failure` says what failed —
+  `NameResolution` (DNS, incl. Windows 11004 `WSANO_DATA`),
+  `SecureConnection`, `Proxy` (incl. a proxy's 407), `Timeout`,
+  `Connection`, `Unknown` — and `last_error` /
+  `hlm_ffi_last_error_detail` carries the SDK's end-user message naming the
+  host to allow. The WinHTTP port uses the system proxy like a browser
+  (`WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`: WPAD/PAC/Internet Options, with a
+  `DEFAULT_PROXY` fallback before Windows 8.1) and answers a proxy's
+  Negotiate/NTLM 407 once with the signed-in user's credentials.
+- **Install a license file by hand** (`LicenseFileImporter`): for machines
+  that cannot reach the server, the customer downloads their signed license
+  from the vendor portal and the app passes it to `hlm_client_import` /
+  `hlm_ffi_import_license[_file]`. It is verified exactly as the offline
+  cache is (signature, product, this machine under identity v2 or the legacy
+  id) before it replaces anything; outcomes `Installed · NotALicenseFile ·
+  NoPublicKey · SignatureInvalid · WrongProduct · WrongComputer ·
+  WriteFailed`, each with an end-user message. `hlm_ffi_license_path`
+  exposes where the license lives. The portal must hand out the portable
+  (JWS) format this library reads — the .NET SDK's XML file is
+  `NotALicenseFile` here.
 
 ## Scope & roadmap
 

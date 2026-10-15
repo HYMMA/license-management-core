@@ -1,4 +1,5 @@
 /* Flat FFI implementation over the core client + built-in ports. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -305,6 +306,65 @@ HLM_API int hlm_ffi_last_http_status(hlm_ffi_client *c)
 HLM_API const char *hlm_ffi_last_error_detail(hlm_ffi_client *c)
 {
     return c == NULL ? "" : c->client.last_error;
+}
+
+HLM_API int hlm_ffi_last_network_failure(hlm_ffi_client *c)
+{
+    return c == NULL ? HLM_NET_NONE : (int)c->client.last_net_failure;
+}
+
+HLM_API const char *hlm_ffi_network_failure_name(int failure)
+{
+    return hlm_net_failure_str((hlm_net_failure)failure);
+}
+
+HLM_API int hlm_ffi_import_license(hlm_ffi_client *c, const char *document)
+{
+    int r;
+
+    if (c == NULL || document == NULL) return HLM_E_ARG;
+    r = hlm_client_import(&c->client, document, strlen(document));
+    if (r == HLM_IMPORT_WRITE_FAILED) /* name the file the user can check */
+        hlm_import_message(r, NULL, c->license_path, c->client.last_error,
+                           sizeof(c->client.last_error));
+    return r;
+}
+
+HLM_API int hlm_ffi_import_license_file(hlm_ffi_client *c, const char *path)
+{
+    hlm_storage_file_cfg src_cfg;
+    hlm_storage src;
+    int n;
+
+    if (c == NULL || path == NULL) return HLM_E_ARG;
+    if (c->client.cfg.storage.write == NULL) return HLM_E_ARG;
+
+    /* read through the same file port the cache uses; the client's own
+     * buffer is free between calls and sized for one signed license */
+    src_cfg.path = path;
+    src = hlm_storage_file(&src_cfg);
+    n = src.read(src.user, c->client.buf, sizeof(c->client.buf) - 1);
+    if (n <= 0) {
+        if (n == HLM_E_BUFFER)
+            snprintf(c->client.last_error, sizeof(c->client.last_error),
+                     "That file is too large to be a license file: %s", path);
+        else
+            snprintf(c->client.last_error, sizeof(c->client.last_error),
+                     "The file could not be read: %s", path);
+        return HLM_IMPORT_NOT_A_LICENSE;
+    }
+    c->client.buf[n] = '\0';
+    return hlm_ffi_import_license(c, c->client.buf);
+}
+
+HLM_API const char *hlm_ffi_import_result_name(int result)
+{
+    return hlm_import_result_str(result);
+}
+
+HLM_API const char *hlm_ffi_license_path(hlm_ffi_client *c)
+{
+    return c == NULL ? "" : c->license_path;
 }
 
 HLM_API const char *hlm_ffi_err_name(int err)

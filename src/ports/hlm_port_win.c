@@ -62,6 +62,56 @@ static int append_header(wchar_t *buf, int cap, int *pos, const wchar_t *fmt,
     return 0;
 }
 
+/* WinHttpOpen with the proxy behavior of a browser.
+ * WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY (Windows 8.1+) resolves the proxy per
+ * request the way Edge does: WPAD auto-detection, a PAC script, the user's
+ * "Internet Options" proxy, falling back to direct. Earlier Windows rejects
+ * that access type with ERROR_INVALID_PARAMETER; there the best available is
+ * WINHTTP_ACCESS_TYPE_DEFAULT_PROXY (the `netsh winhttp` proxy). */
+static HINTERNET open_session(void)
+{
+    HINTERNET s = WinHttpOpen(L"license-management-core/1.0",
+                              WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                              WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (s == NULL && GetLastError() == ERROR_INVALID_PARAMETER)
+        s = WinHttpOpen(L"license-management-core/1.0",
+                        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (s != NULL)
+        WinHttpSetTimeouts(s, HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS,
+                           HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS);
+    return s;
+}
+
+/* A proxy answered 407. If it offers an integrated scheme (Negotiate or
+ * NTLM), arm the request with the signed-in user's Windows credentials —
+ * what a browser offers a company proxy. NULL user/password means "default
+ * credentials", which WinHTTP only releases under the LOW autologon policy
+ * (MEDIUM, the default, limits them to intranet hosts). The policy is
+ * lowered on THIS request only, and only after a proxy challenged it, so
+ * credentials are never volunteered to anyone else. Basic/Digest would need
+ * a typed password: not ours to ask for, so the 407 stands. */
+static int arm_proxy_default_credentials(HINTERNET request)
+{
+    DWORD supported = 0, first = 0, target = 0, scheme = 0;
+    DWORD policy = WINHTTP_AUTOLOGON_SECURITY_LEVEL_LOW;
+
+    if (!WinHttpQueryAuthSchemes(request, &supported, &first, &target) ||
+        target != WINHTTP_AUTH_TARGET_PROXY)
+        return 0;
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_AUTOLOGON_POLICY, &policy,
+                          sizeof(policy)))
+        return 0;
+    if (supported & WINHTTP_AUTH_SCHEME_NEGOTIATE)
+        scheme = WINHTTP_AUTH_SCHEME_NEGOTIATE;
+    else if (supported & WINHTTP_AUTH_SCHEME_NTLM)
+        scheme = WINHTTP_AUTH_SCHEME_NTLM;
+    else
+        return 0;
+    return WinHttpSetCredentials(request, WINHTTP_AUTH_TARGET_PROXY, scheme,
+                                 NULL, NULL, NULL) != FALSE;
+}
+
 static int winhttp_send(void *user, const hlm_http_request *req,
                         hlm_http_response *resp)
 {
@@ -73,6 +123,7 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     int result = HLM_E_HTTP;
     DWORD status = 0, status_len = sizeof(status);
     size_t total = 0;
+    int proxy_auth_tried = 0;
 
     resp->retry_after_seconds = -1;
 
@@ -96,12 +147,8 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     if (cache != NULL && cache->h != NULL) {
         session = (HINTERNET)cache->h;
     } else {
-        session = WinHttpOpen(L"license-management-core/1.0",
-                              WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                              WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        session = open_session();
         if (session == NULL) goto done;
-        WinHttpSetTimeouts(session, HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS,
-                           HLM_HTTP_TIMEOUT_MS, HLM_HTTP_TIMEOUT_MS);
         if (cache != NULL) cache->h = session;
     }
 
@@ -152,22 +199,33 @@ static int winhttp_send(void *user, const hlm_http_request *req,
         }
     }
 
-    if (!WinHttpSendRequest(request,
-                            headers[0] != L'\0' ? headers : WINHTTP_NO_ADDITIONAL_HEADERS,
-                            (DWORD)-1,
-                            req->body != NULL ? (LPVOID)req->body : WINHTTP_NO_REQUEST_DATA,
-                            req->body != NULL ? (DWORD)strlen(req->body) : 0,
-                            req->body != NULL ? (DWORD)strlen(req->body) : 0,
-                            0))
-        goto done;
+    for (;;) {
+        if (!WinHttpSendRequest(request,
+                                headers[0] != L'\0' ? headers : WINHTTP_NO_ADDITIONAL_HEADERS,
+                                (DWORD)-1,
+                                req->body != NULL ? (LPVOID)req->body : WINHTTP_NO_REQUEST_DATA,
+                                req->body != NULL ? (DWORD)strlen(req->body) : 0,
+                                req->body != NULL ? (DWORD)strlen(req->body) : 0,
+                                0))
+            goto done;
 
-    if (!WinHttpReceiveResponse(request, NULL)) goto done;
+        if (!WinHttpReceiveResponse(request, NULL)) goto done;
 
-    if (!WinHttpQueryHeaders(request,
-                             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_len,
-                             WINHTTP_NO_HEADER_INDEX))
-        goto done;
+        status_len = sizeof(status);
+        if (!WinHttpQueryHeaders(request,
+                                 WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                 WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_len,
+                                 WINHTTP_NO_HEADER_INDEX))
+            goto done;
+
+        /* one answer to a proxy challenge with the user's Windows logon;
+         * a second 407 is returned as-is (the client reports HLM_NET_PROXY) */
+        if (status == 407 /* HTTP_STATUS_PROXY_AUTH_REQ */ && !proxy_auth_tried) {
+            proxy_auth_tried = 1;
+            if (arm_proxy_default_credentials(request)) continue;
+        }
+        break;
+    }
 
     /* Retry-After (delta-seconds form; date form is ignored) */
     {
@@ -198,6 +256,10 @@ static int winhttp_send(void *user, const hlm_http_request *req,
     result = HLM_OK;
 
 done:
+    /* every transport `goto done` above comes straight from the failing
+     * WinHTTP call, so its last-error is still intact here */
+    if (result == HLM_E_HTTP)
+        resp->failure = hlm_net_failure_from_winhttp(GetLastError());
     if (request) WinHttpCloseHandle(request);
     if (connect) WinHttpCloseHandle(connect);
     if (session && cache == NULL) WinHttpCloseHandle(session);
