@@ -38,17 +38,23 @@ public class LicenseException extends RuntimeException {
 
     private final int code;
     private final String detail;
+    private final NetworkFailure networkFailure;
 
     public LicenseException(int code) {
         this(code, "");
     }
 
     public LicenseException(int code, String detail) {
+        this(code, detail, NetworkFailure.NONE);
+    }
+
+    public LicenseException(int code, String detail, NetworkFailure networkFailure) {
         super(detail == null || detail.isEmpty()
                 ? Native.errName(code)
                 : Native.errName(code) + ": " + detail);
         this.code = code;
         this.detail = detail == null ? "" : detail;
+        this.networkFailure = networkFailure == null ? NetworkFailure.NONE : networkFailure;
     }
 
     /** The classified native error code (negative). */
@@ -56,8 +62,21 @@ public class LicenseException extends RuntimeException {
         return code;
     }
 
-    /** The server's human-readable refusal detail ("" when none). */
+    /**
+     * The server's human-readable refusal detail ("" when none); for
+     * {@link #NETWORK_FAILURE} a message that says what failed and names the
+     * host to allow.
+     */
     public String detail() {
         return detail;
+    }
+
+    /**
+     * For {@link #NETWORK_FAILURE}: what failed (DNS, TLS, proxy, timeout,
+     * connection), so a UI can offer the right way out — e.g.
+     * {@link LicenseClient#importLicenseFile(java.nio.file.Path)}.
+     */
+    public NetworkFailure networkFailure() {
+        return networkFailure;
     }
 }

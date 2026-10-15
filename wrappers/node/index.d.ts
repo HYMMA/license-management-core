@@ -41,15 +41,52 @@ export declare const LicenseErrorCode: Readonly<{
 export type LicenseErrorCode =
   (typeof LicenseErrorCode)[keyof typeof LicenseErrorCode];
 
+/** Why the license server could not be reached (the .NET SDK's NetworkFailureReason). */
+export declare const NetworkFailure: Readonly<{
+  None: 0;
+  Unknown: 1;
+  NameResolution: 2;
+  SecureConnection: 3;
+  Proxy: 4;
+  Timeout: 5;
+  Connection: 6;
+}>;
+export type NetworkFailure = (typeof NetworkFailure)[keyof typeof NetworkFailure];
+
+/** Outcome of LicenseClient#importLicense (the .NET SDK's LicenseImportOutcome). */
+export declare const LicenseImportOutcome: Readonly<{
+  Installed: 0;
+  NotALicenseFile: 1;
+  NoPublicKey: 2;
+  SignatureInvalid: 3;
+  WrongProduct: 4;
+  WrongComputer: 5;
+  WriteFailed: 6;
+}>;
+export type LicenseImportOutcome =
+  (typeof LicenseImportOutcome)[keyof typeof LicenseImportOutcome];
+
+/** What happened to an imported license file, with a message for the end user. */
+export interface LicenseImportResult {
+  outcome: LicenseImportOutcome;
+  succeeded: boolean;
+  message: string;
+  /** Where the file now lives, when it was installed. */
+  installedPath: string | null;
+}
+
 /**
  * Thrown when the native core reports an error. `code` is the native
  * error code (a LicenseErrorCode value); `detail` carries the server's
- * human-readable refusal reason when it sent one.
+ * human-readable refusal reason when it sent one — or, for NetworkFailure,
+ * a message saying what failed and naming the host to allow, with the
+ * cause in `networkFailure`.
  */
 export declare class LicenseError extends Error {
-  constructor(code: number, detail?: string);
+  constructor(code: number, detail?: string, networkFailure?: NetworkFailure);
   code: number;
   detail: string;
+  networkFailure: NetworkFailure;
 }
 
 export interface LicenseClientOptions {
@@ -97,6 +134,18 @@ export declare class LicenseClient {
   readonly trialEnd: Date | null;
   readonly receiptExpires: Date | null;
   readonly lastHttpStatus: number;
+  /** Why the server could not be reached on the last call; also set when
+   *  check() succeeded from the cached file because the network failed. */
+  readonly lastNetworkFailure: NetworkFailure;
+  /** The license cache file this client reads and writes ('' when none). */
+  readonly licensePath: string;
+
+  /** Verify a license document exactly as the offline cache is verified,
+   *  then install it at licensePath; a refused file never replaces the
+   *  existing one. Never touches the network. */
+  importLicense(document: string): LicenseImportResult;
+  /** Read, verify and install the license file at `filePath`. */
+  importLicenseFile(filePath: string): LicenseImportResult;
 
   metadata(key: string): string;
   close(): void;

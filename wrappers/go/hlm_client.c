@@ -22,6 +22,14 @@
  * else GET DateTime from the API, else the local clock — and every status
  * decision in that call uses it, so winding the local clock back does not
  * resurrect an expired trial.
+ *
+ * Network diagnosis (mirrors the SDK's NetworkUnavailableException): a
+ * transport failure stays HLM_E_HTTP, but the port's cause lands in
+ * last_net_failure and an end-user message naming the host in last_error.
+ * A 407 is the proxy refusing us, not the API answering: HLM_NET_PROXY.
+ *
+ * License files installed by hand (the SDK's LicenseFileImporter) go through
+ * hlm_client_import: the same verification as the offline cache, no network.
  */
 #include <stdio.h>
 #include <string.h>
@@ -149,6 +157,7 @@ static int send_req(hlm_client *c, const char *method, const char *path_query,
         resp.body_cap = sizeof(c->resp) - 1;
         resp.body_len = 0;
         resp.retry_after_seconds = -1;
+        resp.failure = HLM_NET_UNKNOWN;
 
         r = c->cfg.http.send(c->cfg.http.user, &req, &resp);
 
@@ -156,6 +165,15 @@ static int send_req(hlm_client *c, const char *method, const char *path_query,
             c->resp[resp.body_len < sizeof(c->resp) ? resp.body_len
                                                     : sizeof(c->resp) - 1] = '\0';
             c->last_http_status = resp.status;
+            c->last_net_failure = HLM_NET_NONE;
+
+            /* 407 comes from a proxy between us and the server, never from
+             * the server: the network refused us, the API did not. Retrying
+             * with the same credentials cannot help. */
+            if (resp.status == 407) {
+                c->last_net_failure = HLM_NET_PROXY;
+                return HLM_E_HTTP;
+            }
 
             if (resp.status == 401 || resp.status == 403) return HLM_E_AUTH;
 
@@ -177,7 +195,9 @@ static int send_req(hlm_client *c, const char *method, const char *path_query,
             continue;
         }
 
-        /* transport failure */
+        /* transport failure: remember why, for the end-user message */
+        c->last_net_failure = resp.failure != HLM_NET_NONE ? resp.failure
+                                                           : HLM_NET_UNKNOWN;
         if (attempt == HLM_HTTP_ATTEMPTS) return HLM_E_HTTP;
         backoff_wait(c, HLM_HTTP_BACKOFF_BASE_MS << (attempt - 1),
                      &total_wait_ms);
@@ -228,6 +248,109 @@ static int map_api_error(hlm_client *c, int status)
 }
 
 /* ------------------------------------------------------------------ */
+/* network diagnosis                                                   */
+/* ------------------------------------------------------------------ */
+
+const char *hlm_net_failure_str(hlm_net_failure f)
+{
+    switch (f) {
+    case HLM_NET_NONE: return "None";
+    case HLM_NET_NAME_RESOLUTION: return "NameResolution";
+    case HLM_NET_SECURE_CONNECTION: return "SecureConnection";
+    case HLM_NET_PROXY: return "Proxy";
+    case HLM_NET_TIMEOUT: return "Timeout";
+    case HLM_NET_CONNECTION: return "Connection";
+    default: return "Unknown";
+    }
+}
+
+int hlm_net_message(hlm_net_failure f, const char *host, char *out, size_t cap)
+{
+    int n;
+
+    if (out == NULL || cap == 0) return HLM_E_ARG;
+    if (host == NULL || host[0] == '\0') host = "the license server";
+
+    switch (f) {
+    case HLM_NET_NAME_RESOLUTION:
+        n = snprintf(out, cap,
+                     "This computer's network could not find %s. A company DNS "
+                     "filter or firewall is probably blocking it. Ask your IT "
+                     "team to allow %s, or install the license file by hand.",
+                     host, host);
+        break;
+    case HLM_NET_SECURE_CONNECTION:
+        n = snprintf(out, cap,
+                     "A secure connection to %s could not be set up. A proxy or "
+                     "security product may be inspecting HTTPS traffic. Ask your "
+                     "IT team to allow %s, or install the license file by hand.",
+                     host, host);
+        break;
+    case HLM_NET_PROXY:
+        n = snprintf(out, cap,
+                     "The network proxy refused the connection to %s. Ask your "
+                     "IT team to allow %s, or install the license file by hand.",
+                     host, host);
+        break;
+    case HLM_NET_TIMEOUT:
+        n = snprintf(out, cap,
+                     "%s did not answer in time. The network may be slow or "
+                     "blocking it. Try again, or install the license file by "
+                     "hand.",
+                     host);
+        break;
+    default:
+        n = snprintf(out, cap,
+                     "Could not connect to %s. Check the internet connection and "
+                     "firewall, or install the license file by hand.",
+                     host);
+        break;
+    }
+    if (n < 0) {
+        out[0] = '\0';
+        return HLM_E_BUFFER;
+    }
+    return (size_t)n >= cap ? HLM_E_BUFFER : HLM_OK;
+}
+
+/* Host part of base_url ("https://license-management.com/api/" ->
+ * "license-management.com"): what the user's IT team has to allow. */
+static void base_url_host(const char *url, char *out, size_t cap)
+{
+    const char *p = strstr(url, "://");
+    size_t n = 0;
+
+    p = p != NULL ? p + 3 : url;
+    while (p[n] != '\0' && p[n] != '/' && p[n] != ':' && p[n] != '?' &&
+           n + 1 < cap) {
+        out[n] = p[n];
+        n++;
+    }
+    out[n] = '\0';
+}
+
+/* Every public network call starts here: the failure of an earlier call
+ * must not be reported for this one. */
+static void begin_call(hlm_client *c)
+{
+    c->last_net_failure = HLM_NET_NONE;
+}
+
+/* ...and ends here: a transport failure leaves an end-user message that
+ * says WHAT failed and names the host, in the same last_error the server's
+ * refusal details use, so every wrapper surfaces it without new plumbing. */
+static int end_call(hlm_client *c, int r)
+{
+    if (r == HLM_E_HTTP && c->last_net_failure != HLM_NET_NONE) {
+        char host[128];
+        base_url_host(c->cfg.base_url, host, sizeof(host));
+        hlm_net_message(c->last_net_failure, host, c->last_error,
+                        sizeof(c->last_error));
+    }
+    return r;
+}
+
+/* ------------------------------------------------------------------ */
 /* trusted time                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -256,6 +379,13 @@ static int fetch_server_time(hlm_client *c, int64_t *now_out)
  * highest trusted time this handle has observed (timesync, server time, or
  * a verified license's server-signed timestamps) — so winding the clock
  * back cannot resurrect an expired license. */
+static void use_local_clock(hlm_client *c)
+{
+    int64_t t = c->cfg.clock.now(c->cfg.clock.user);
+    if (t < c->time_floor) t = c->time_floor;
+    c->eval_now = t;
+}
+
 static void resolve_now(hlm_client *c)
 {
     int64_t t;
@@ -267,9 +397,7 @@ static void resolve_now(hlm_client *c)
         if (c->cfg.http.send != NULL && fetch_server_time(c, &t) == HLM_OK)
             goto trusted;
     }
-    t = c->cfg.clock.now(c->cfg.clock.user);
-    if (t < c->time_floor) t = c->time_floor;
-    c->eval_now = t;
+    use_local_clock(c);
     return;
 
 trusted:
@@ -302,31 +430,34 @@ int hlm_client_init(hlm_client *c, const hlm_client_cfg *cfg)
 /* verify + adopt a signed license string                              */
 /* ------------------------------------------------------------------ */
 
-static int adopt_license(hlm_client *c, const char *jws, size_t len)
+/* Make an already-verified license the client's current one. */
+static void adopt_verified(hlm_client *c, const hlm_license *lic)
 {
-    hlm_license lic;
-    hlm_status status;
-    int r = hlm_license_check(jws, len, c->cfg.keys, c->cfg.key_count,
-                              &c->cfg.crypto, c->cfg.product_id,
-                              c->cfg.machine_id, c->eval_now, &lic, &status);
-    if (r != HLM_OK) return r;
-
     /* The verified license carries server-signed timestamps; real time can
      * never be earlier than them. Raise the floor, and if the evaluation
      * time (local-clock fallback) sits below it the clock was rolled back —
-     * re-evaluate at the floor. */
-    if (lic.created != HLM_TIME_NONE && lic.created > c->time_floor)
-        c->time_floor = lic.created;
-    if (lic.updated != HLM_TIME_NONE && lic.updated > c->time_floor)
-        c->time_floor = lic.updated;
-    if (c->eval_now < c->time_floor) {
-        c->eval_now = c->time_floor;
-        status = hlm_license_status(&lic, c->eval_now);
-    }
+     * evaluate at the floor. */
+    if (lic->created != HLM_TIME_NONE && lic->created > c->time_floor)
+        c->time_floor = lic->created;
+    if (lic->updated != HLM_TIME_NONE && lic->updated > c->time_floor)
+        c->time_floor = lic->updated;
+    if (c->eval_now < c->time_floor) c->eval_now = c->time_floor;
 
-    c->license = lic;
-    c->status = status;
+    c->license = *lic;
+    c->status = hlm_license_status(lic, c->eval_now);
     c->has_license = 1;
+}
+
+static int adopt_license(hlm_client *c, const char *jws, size_t len)
+{
+    hlm_license lic;
+    int r = hlm_license_check_machine(jws, len, c->cfg.keys, c->cfg.key_count,
+                                      &c->cfg.crypto, c->cfg.product_id,
+                                      c->cfg.machine_id,
+                                      c->cfg.machine_id_legacy, c->eval_now,
+                                      &lic, NULL);
+    if (r != HLM_OK) return r;
+    adopt_verified(c, &lic);
     return HLM_OK;
 }
 
@@ -485,8 +616,9 @@ static int refresh_internal(hlm_client *c)
 int hlm_client_refresh(hlm_client *c)
 {
     if (c == NULL) return HLM_E_ARG;
+    begin_call(c);
     resolve_now(c);
-    return refresh_internal(c);
+    return end_call(c, refresh_internal(c));
 }
 
 static int check_internal(hlm_client *c)
@@ -518,8 +650,9 @@ static int check_internal(hlm_client *c)
 int hlm_client_check(hlm_client *c)
 {
     if (c == NULL) return HLM_E_ARG;
+    begin_call(c);
     resolve_now(c);
-    return check_internal(c);
+    return end_call(c, check_internal(c));
 }
 
 static int patch_license(hlm_client *c, const char *code_or_null)
@@ -558,11 +691,9 @@ static int patch_license(hlm_client *c, const char *code_or_null)
 
 /* Shared activate/deactivate flow: PATCH the receipt code (NULL frees the
  * seat), then refresh the signed license. */
-static int set_receipt_code(hlm_client *c, const char *code_or_null)
+static int set_receipt_code_internal(hlm_client *c, const char *code_or_null)
 {
     int r;
-
-    resolve_now(c);
 
     if (!c->has_license) {
         r = check_internal(c);
@@ -572,6 +703,13 @@ static int set_receipt_code(hlm_client *c, const char *code_or_null)
     r = patch_license(c, code_or_null);
     if (r != HLM_OK) return r;
     return refresh_internal(c);
+}
+
+static int set_receipt_code(hlm_client *c, const char *code_or_null)
+{
+    begin_call(c);
+    resolve_now(c);
+    return end_call(c, set_receipt_code_internal(c, code_or_null));
 }
 
 int hlm_client_activate(hlm_client *c, const char *receipt_code)
@@ -585,4 +723,32 @@ int hlm_client_deactivate(hlm_client *c)
 {
     if (c == NULL) return HLM_E_ARG;
     return set_receipt_code(c, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/* license file installed by hand                                      */
+/* ------------------------------------------------------------------ */
+
+int hlm_client_import(hlm_client *c, const char *document, size_t len)
+{
+    hlm_license lic;
+    int r;
+
+    if (c == NULL || document == NULL) return HLM_E_ARG;
+
+    r = hlm_license_import(document, len, c->cfg.keys, c->cfg.key_count,
+                           &c->cfg.crypto, c->cfg.product_id,
+                           c->cfg.machine_id, c->cfg.machine_id_legacy,
+                           &c->cfg.storage, &lic);
+    if (r < 0) return r;
+
+    hlm_import_message(r, &lic, NULL, c->last_error, sizeof(c->last_error));
+    if (r == HLM_IMPORT_INSTALLED) {
+        /* The computer is offline by assumption — that is why the file came
+         * by hand — so evaluate at the local clock, never below the floor
+         * of trusted times already seen, instead of trying the network. */
+        use_local_clock(c);
+        adopt_verified(c, &lic);
+    }
+    return r;
 }

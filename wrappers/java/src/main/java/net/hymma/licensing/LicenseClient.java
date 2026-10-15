@@ -1,6 +1,10 @@
 package net.hymma.licensing;
 
+import java.io.IOException;
 import java.lang.foreign.MemorySegment;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -121,6 +125,57 @@ public final class LicenseClient implements AutoCloseable {
         return Native.metadata(handle(), key);
     }
 
+    /**
+     * Why the server could not be reached on the last call. Also set when
+     * {@link #check()} succeeded from the cached file because the network
+     * failed — a UI can then offer {@link #importLicenseFile(Path)}.
+     */
+    public NetworkFailure lastNetworkFailure() {
+        return NetworkFailure.fromCode(Native.lastNetworkFailure(handle()));
+    }
+
+    /**
+     * The license cache file this client reads and writes ("" when none) —
+     * for a host UI to show where the license lives.
+     */
+    public String licensePath() {
+        return Native.licensePath(handle());
+    }
+
+    /**
+     * Install a signed license the user obtained outside the online flow
+     * (vendor portal, email) on a computer that cannot reach the server. It
+     * is verified exactly as the offline cache is — vendor signature,
+     * product, this computer — before it replaces anything, so a wrong or
+     * tampered file never displaces a working one. Never touches the
+     * network. Throws {@link LicenseException} only for misuse (e.g. a
+     * client without a license path).
+     */
+    public LicenseImportResult importLicense(String document) {
+        if (document == null) {
+            throw new NullPointerException("document");
+        }
+        int r = Native.importLicense(handle(), document);
+        LicenseImportOutcome outcome = LicenseImportOutcome.fromCode(r);
+        if (outcome == null) {
+            throw new LicenseException(r);
+        }
+        return new LicenseImportResult(outcome, Native.lastErrorDetail(handle()),
+                outcome == LicenseImportOutcome.INSTALLED ? licensePath() : null);
+    }
+
+    /** Read, verify and install the license file at {@code source}. */
+    public LicenseImportResult importLicenseFile(Path source) {
+        String document;
+        try {
+            document = Files.readString(source, StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            return new LicenseImportResult(LicenseImportOutcome.NOT_A_LICENSE_FILE,
+                    "The file could not be read: " + e.getMessage(), null);
+        }
+        return importLicense(document);
+    }
+
     // -- statics ------------------------------------------------------------ //
 
     /**
@@ -183,7 +238,9 @@ public final class LicenseClient implements AutoCloseable {
 
     private LicenseStatus guard(int err) {
         if (err != 0) {
-            throw new LicenseException(err, Native.lastErrorDetail(handle()));
+            throw new LicenseException(err, Native.lastErrorDetail(handle()),
+                    err == LicenseException.NETWORK_FAILURE
+                            ? lastNetworkFailure() : NetworkFailure.NONE);
         }
         return status();
     }

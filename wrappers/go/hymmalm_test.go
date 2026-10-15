@@ -447,4 +447,97 @@ func TestOfflineWithoutCacheReportsNetworkFailure(t *testing.T) {
 	if lerr.Code != ErrNetworkFailure {
 		t.Fatalf("code = %d, want %d (network failure)", lerr.Code, ErrNetworkFailure)
 	}
+	// ...and it says what failed, naming the host to allow
+	if lerr.NetworkFailure != NetworkConnection || c.LastNetworkFailure() != NetworkConnection {
+		t.Fatalf("network failure = %v, want Connection", lerr.NetworkFailure)
+	}
+	if !strings.HasPrefix(lerr.Detail, "Could not connect to 127.0.0.1.") {
+		t.Fatalf("detail %q does not name the host", lerr.Detail)
+	}
+}
+
+// ------------------------------------------------------------------ //
+// license file installed by hand (mirror test_flow.py ImportTests)    //
+// ------------------------------------------------------------------ //
+
+func importFixture(t *testing.T) (map[string]string, string, string) {
+	t.Helper()
+	cases, jwks := vectorJwsByName(t)
+	cache := filepath.Join(t.TempDir(), "cache.lic")
+	if err := os.WriteFile(cache, []byte(cases["rs256-trial-valid"]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return cases, jwks, cache
+}
+
+func readCache(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestImportGenuineFileInstalls(t *testing.T) {
+	cases, jwks, cache := importFixture(t)
+	src := filepath.Join(filepath.Dir(cache), "downloaded.lic")
+	// a BOM and a trailing newline, as a browser download may add
+	if err := os.WriteFile(src, []byte("\xef\xbb\xbf"+cases["rs256-paid-valid"]+"\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := newFlowClient(t, jwks, deadURL, cache)
+	if c.LicensePath() != cache {
+		t.Fatalf("LicensePath = %q, want %q", c.LicensePath(), cache)
+	}
+	r, err := c.ImportLicenseFile(src)
+	if err != nil || !r.Succeeded() || r.Message != "License file installed." || r.InstalledPath != cache {
+		t.Fatalf("import = %+v, %v", r, err)
+	}
+	if c.LicenseID() != "LIC_01KWVTRYMCAGWHTCVBYFGNJDA0" {
+		t.Fatalf("license not adopted: %q", c.LicenseID())
+	}
+	if readCache(t, cache) != cases["rs256-paid-valid"] {
+		t.Fatal("cache not replaced by the imported license")
+	}
+}
+
+func TestImportRefusalsLeaveCacheUntouched(t *testing.T) {
+	cases, jwks, cache := importFixture(t)
+	trial := cases["rs256-trial-valid"]
+	c := newFlowClient(t, jwks, deadURL, cache)
+
+	check := func(name string, r ImportResult, err error, want ImportOutcome, msg string) {
+		t.Helper()
+		if err != nil || r.Outcome != want || r.Succeeded() || !strings.Contains(r.Message, msg) {
+			t.Fatalf("%s: got %v %q (%v), want %v containing %q", name, r.Outcome, r.Message, err, want, msg)
+		}
+		if readCache(t, cache) != trial {
+			t.Fatalf("%s: cache file was changed", name)
+		}
+	}
+
+	r, err := c.ImportLicense(cases["rs256-tampered-payload"])
+	check("tampered", r, err, ImportSignatureInvalid, "or it has been changed")
+
+	r, err = c.ImportLicense("not a license at all")
+	check("garbage", r, err, ImportNotALicenseFile, "That isn't a license file.")
+
+	r, err = c.ImportLicenseFile(filepath.Join(filepath.Dir(cache), "missing.lic"))
+	check("missing file", r, err, ImportNotALicenseFile, "The file could not be read")
+
+	other, err := New(Options{
+		BaseURL: deadURL, ProductID: product, ClientAPIKey: "PUB_test", JwksJSON: jwks,
+		MachineID: "OTHER" + strings.Repeat("0", 47), MachineName: "SHOP-FLOOR-01", LicensePath: cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	r, err = other.ImportLicense(cases["rs256-paid-valid"])
+	check("other computer", r, err, ImportWrongComputer, "for the computer SHOP-FLOOR-01")
+
+	if ImportSignatureInvalid.String() != "SignatureInvalid" || NetworkNameResolution.String() != "NameResolution" {
+		t.Fatal("outcome / failure names differ from the .NET SDK's")
+	}
 }

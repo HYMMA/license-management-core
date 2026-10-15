@@ -8,6 +8,8 @@ the clock-tamper cascade is exercised on every call.
 """
 import json
 import os
+import shutil
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,7 +18,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from hymmalm import (LicenseClient, LicenseError, LicenseErrorCode,
-                     LicenseStatus, SignedFormat)
+                     LicenseImportOutcome, LicenseStatus, NetworkFailure,
+                     SignedFormat)
 
 os.environ["HLM_TIMESYNC"] = "off"
 
@@ -153,6 +156,99 @@ class FlowTests(unittest.TestCase):
                 c.check()
             self.assertEqual(ctx.exception.code,
                              LicenseErrorCode.NETWORK_FAILURE)
+            # ...and says what failed, naming the host to allow
+            self.assertEqual(ctx.exception.network_failure,
+                             NetworkFailure.CONNECTION)
+            self.assertEqual(c.last_network_failure, NetworkFailure.CONNECTION)
+            self.assertTrue(ctx.exception.detail.startswith(
+                "Could not connect to 127.0.0.1."))
+
+    def test_proxy_407_reports_proxy(self):
+        self.srv.state["fail_status"] = 407
+        with self.client() as c:
+            with self.assertRaises(LicenseError) as ctx:
+                c.check()
+            self.assertEqual(ctx.exception.code,
+                             LicenseErrorCode.NETWORK_FAILURE)
+            self.assertEqual(ctx.exception.network_failure,
+                             NetworkFailure.PROXY)
+            self.assertIn("proxy refused the connection to 127.0.0.1",
+                          ctx.exception.detail)
+
+
+class ImportTests(unittest.TestCase):
+    """Installing a license file by hand: never touches the network."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cache = os.path.join(self.dir, "cache.lic")
+        with open(self.cache, "w") as f:
+            f.write(CASES["rs256-trial-valid"])
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def client(self, machine=MACHINE, product=PRODUCT):
+        return LicenseClient(product_id=product, client_api_key="PUB_test",
+                             jwks_json=JWKS, base_url="http://127.0.0.1:1/api/",
+                             machine_id=machine, machine_name="SHOP-FLOOR-01",
+                             license_path=self.cache)
+
+    def cached(self):
+        with open(self.cache) as f:
+            return f.read()
+
+    def test_genuine_file_installs(self):
+        src = os.path.join(self.dir, "downloaded.lic")
+        with open(src, "w", encoding="utf-8-sig") as f:  # BOM, as browsers save
+            f.write(CASES["rs256-paid-valid"] + "\n")
+        with self.client() as c:
+            self.assertEqual(c.license_path, self.cache)
+            r = c.import_license_file(src)
+            self.assertTrue(r.succeeded)
+            self.assertEqual(r.outcome, LicenseImportOutcome.INSTALLED)
+            self.assertEqual(r.message, "License file installed.")
+            self.assertEqual(r.installed_path, self.cache)
+            self.assertEqual(c.license_id, "LIC_01KWVTRYMCAGWHTCVBYFGNJDA0")
+        self.assertEqual(self.cached(), CASES["rs256-paid-valid"])
+
+    def assert_refused(self, client, document, outcome, message_part):
+        with client as c:
+            r = c.import_license(document)
+            self.assertEqual(r.outcome, outcome)
+            self.assertFalse(r.succeeded)
+            self.assertIn(message_part, r.message)
+        self.assertEqual(self.cached(), CASES["rs256-trial-valid"])
+
+    def test_tampered_refused_and_cache_untouched(self):
+        self.assert_refused(self.client(), CASES["rs256-tampered-payload"],
+                            LicenseImportOutcome.SIGNATURE_INVALID,
+                            "or it has been changed")
+
+    def test_other_product_refused(self):
+        self.assert_refused(self.client(product="PRD_OTHER"),
+                            CASES["rs256-paid-valid"],
+                            LicenseImportOutcome.WRONG_PRODUCT,
+                            "This license file is for CADshift Nesting, "
+                            "not this one.")
+
+    def test_other_computer_refused(self):
+        self.assert_refused(self.client(machine="OTHER" + "0" * 47),
+                            CASES["rs256-paid-valid"],
+                            LicenseImportOutcome.WRONG_COMPUTER,
+                            "for the computer SHOP-FLOOR-01")
+
+    def test_garbage_refused(self):
+        self.assert_refused(self.client(), "definitely not a license",
+                            LicenseImportOutcome.NOT_A_LICENSE_FILE,
+                            "That isn't a license file.")
+
+    def test_unreadable_file(self):
+        with self.client() as c:
+            r = c.import_license_file(os.path.join(self.dir, "missing.lic"))
+            self.assertEqual(r.outcome, LicenseImportOutcome.NOT_A_LICENSE_FILE)
+            self.assertTrue(r.message.startswith("The file could not be read"))
+        self.assertEqual(self.cached(), CASES["rs256-trial-valid"])
 
 
 if __name__ == "__main__":

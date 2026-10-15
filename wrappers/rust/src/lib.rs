@@ -41,7 +41,7 @@ pub mod ffi;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::{c_char, c_int};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -85,10 +85,99 @@ impl LicenseStatus {
     }
 }
 
+/// Why the license server could not be reached (native `hlm_net_failure`;
+/// the .NET SDK's NetworkFailureReason).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NetworkFailure {
+    /// No transport failure on the last call.
+    None = 0,
+    /// Failed; the cause could not be determined.
+    Unknown = 1,
+    /// DNS returned no address for the server — typically a company DNS filter.
+    NameResolution = 2,
+    /// The TLS handshake failed — often an HTTPS-inspecting proxy.
+    SecureConnection = 3,
+    /// A web proxy refused or failed the connection, or demanded credentials (407).
+    Proxy = 4,
+    /// The server did not answer in time.
+    Timeout = 5,
+    /// The address was found but the connection was refused or dropped.
+    Connection = 6,
+}
+
+impl NetworkFailure {
+    /// Map a native `hlm_net_failure` code; unrecognized codes become `Unknown`.
+    pub fn from_code(code: i32) -> NetworkFailure {
+        match code {
+            0 => NetworkFailure::None,
+            2 => NetworkFailure::NameResolution,
+            3 => NetworkFailure::SecureConnection,
+            4 => NetworkFailure::Proxy,
+            5 => NetworkFailure::Timeout,
+            6 => NetworkFailure::Connection,
+            _ => NetworkFailure::Unknown,
+        }
+    }
+}
+
+/// Outcome of [`LicenseClient::import_license`] (native `hlm_import_result`;
+/// the .NET SDK's LicenseImportOutcome).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LicenseImportOutcome {
+    /// Verified and installed where the client reads it.
+    Installed = 0,
+    /// Not a license file this library can read.
+    NotALicenseFile = 1,
+    /// No public key was configured, so the file could not be verified.
+    NoPublicKey = 2,
+    /// The signature does not verify (altered, or another vendor's file).
+    SignatureInvalid = 3,
+    /// The file is for a different product.
+    WrongProduct = 4,
+    /// The file is for a different computer.
+    WrongComputer = 5,
+    /// The file could not be written to the license path.
+    WriteFailed = 6,
+}
+
+impl LicenseImportOutcome {
+    fn from_code(code: i32) -> Option<LicenseImportOutcome> {
+        Some(match code {
+            0 => LicenseImportOutcome::Installed,
+            1 => LicenseImportOutcome::NotALicenseFile,
+            2 => LicenseImportOutcome::NoPublicKey,
+            3 => LicenseImportOutcome::SignatureInvalid,
+            4 => LicenseImportOutcome::WrongProduct,
+            5 => LicenseImportOutcome::WrongComputer,
+            6 => LicenseImportOutcome::WriteFailed,
+            _ => return None,
+        })
+    }
+}
+
+/// What happened to an imported license file, with a message written for
+/// the end user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LicenseImportResult {
+    pub outcome: LicenseImportOutcome,
+    /// End-user message for the outcome.
+    pub message: String,
+    /// Where the file now lives, when it was installed.
+    pub installed_path: Option<PathBuf>,
+}
+
+impl LicenseImportResult {
+    pub fn succeeded(&self) -> bool {
+        self.outcome == LicenseImportOutcome::Installed
+    }
+}
+
 /// Error reported by the native core.
 ///
 /// `code` is the native `hlm_err` value; `detail` carries the server's
-/// human-readable refusal reason when it sent one. Well-known codes:
+/// human-readable refusal reason when it sent one — or, for `-7` (network
+/// failure), a message saying what failed and naming the host to allow
+/// (the cause itself: [`LicenseClient::last_network_failure`]). Well-known codes:
 ///
 /// | code | meaning |
 /// |-----:|---------|
@@ -305,6 +394,57 @@ impl LicenseClient {
     /// The HTTP status of the last server round-trip (0 when none).
     pub fn last_http_status(&self) -> i32 {
         unsafe { ffi::hlm_ffi_last_http_status(self.handle) }
+    }
+
+    /// Why the server could not be reached on the last call. Also set when
+    /// [`check`](Self::check) succeeded from the cached file because the
+    /// network failed — a UI can then offer [`import_license_file`](Self::import_license_file).
+    pub fn last_network_failure(&self) -> NetworkFailure {
+        NetworkFailure::from_code(unsafe { ffi::hlm_ffi_last_network_failure(self.handle) })
+    }
+
+    /// The license cache file this client reads and writes (`None` when the
+    /// client has no cache) — for a host UI to show where the license lives.
+    pub fn license_path(&self) -> Option<PathBuf> {
+        let p = unsafe { copy_c_str(ffi::hlm_ffi_license_path(self.handle)) };
+        if p.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(p))
+        }
+    }
+
+    /// Install a signed license the user obtained outside the online flow
+    /// (vendor portal, email) on a computer that cannot reach the server.
+    /// Verified exactly as the offline cache is — vendor signature, product,
+    /// this computer — before it replaces anything, so a wrong or tampered
+    /// file never displaces a working one. Never touches the network.
+    /// `Err` only for misuse (e.g. a client without a license path).
+    pub fn import_license(&mut self, document: &str) -> Result<LicenseImportResult> {
+        let doc = cstring(document)?;
+        let r = unsafe { ffi::hlm_ffi_import_license(self.handle, doc.as_ptr()) };
+        let Some(outcome) = LicenseImportOutcome::from_code(r) else {
+            return Err(LicenseError::new(r, String::new()));
+        };
+        let message = unsafe { copy_c_str(ffi::hlm_ffi_last_error_detail(self.handle)) };
+        let installed_path = if outcome == LicenseImportOutcome::Installed {
+            self.license_path()
+        } else {
+            None
+        };
+        Ok(LicenseImportResult { outcome, message, installed_path })
+    }
+
+    /// Read, verify and install the license file at `path`.
+    pub fn import_license_file(&mut self, path: &Path) -> Result<LicenseImportResult> {
+        match std::fs::read_to_string(path) {
+            Ok(document) => self.import_license(&document),
+            Err(e) => Ok(LicenseImportResult {
+                outcome: LicenseImportOutcome::NotALicenseFile,
+                message: format!("The file could not be read: {e}"),
+                installed_path: None,
+            }),
+        }
     }
 }
 

@@ -34,6 +34,95 @@ int hlm_sntp_parse_reply(const uint8_t pkt[HLM_SNTP_PACKET_SIZE],
     return 0;
 }
 
+/* ---- transport error -> hlm_net_failure ------------------------------
+ * Numeric codes spelled out (with their names) instead of winhttp.h /
+ * curl.h macros so these mappings compile — and are tested — on every
+ * platform, and custom ports over either stack can reuse them. */
+
+hlm_net_failure hlm_net_failure_from_winhttp(unsigned long error)
+{
+    switch (error) {
+    case 12007: /* ERROR_WINHTTP_NAME_NOT_RESOLVED */
+    case 11001: /* WSAHOST_NOT_FOUND */
+    case 11002: /* WSATRY_AGAIN */
+    case 11004: /* WSANO_DATA: "name is valid, but no data of the requested type" */
+        return HLM_NET_NAME_RESOLUTION;
+
+    case 12037: /* ERROR_WINHTTP_SECURE_CERT_DATE_INVALID */
+    case 12038: /* ERROR_WINHTTP_SECURE_CERT_CN_INVALID */
+    case 12044: /* ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED */
+    case 12045: /* ERROR_WINHTTP_SECURE_INVALID_CA */
+    case 12057: /* ERROR_WINHTTP_SECURE_CERT_REV_FAILED */
+    case 12157: /* ERROR_WINHTTP_SECURE_CHANNEL_ERROR */
+    case 12169: /* ERROR_WINHTTP_SECURE_INVALID_CERT */
+    case 12170: /* ERROR_WINHTTP_SECURE_CERT_REVOKED */
+    case 12175: /* ERROR_WINHTTP_SECURE_FAILURE */
+    case 12179: /* ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE */
+    case 12185: /* ERROR_WINHTTP_CLIENT_CERT_NO_PRIVATE_KEY */
+    case 12186: /* ERROR_WINHTTP_CLIENT_CERT_NO_ACCESS_PRIVATE_KEY */
+        return HLM_NET_SECURE_CONNECTION;
+
+    case 12166: /* ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT */
+    case 12167: /* ERROR_WINHTTP_UNABLE_TO_DOWNLOAD_SCRIPT */
+    case 12178: /* ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR */
+    case 12180: /* ERROR_WINHTTP_AUTODETECTION_FAILED */
+        return HLM_NET_PROXY;
+
+    case 12002: /* ERROR_WINHTTP_TIMEOUT */
+    case 10060: /* WSAETIMEDOUT */
+        return HLM_NET_TIMEOUT;
+
+    case 12029: /* ERROR_WINHTTP_CANNOT_CONNECT */
+    case 12030: /* ERROR_WINHTTP_CONNECTION_ERROR */
+    case 12152: /* ERROR_WINHTTP_INVALID_SERVER_RESPONSE */
+    case 10054: /* WSAECONNRESET */
+    case 10061: /* WSAECONNREFUSED */
+        return HLM_NET_CONNECTION;
+
+    default:
+        return HLM_NET_UNKNOWN;
+    }
+}
+
+hlm_net_failure hlm_net_failure_from_curl(int curl_code)
+{
+    switch (curl_code) {
+    case 6:  /* CURLE_COULDNT_RESOLVE_HOST */
+        return HLM_NET_NAME_RESOLUTION;
+
+    case 35: /* CURLE_SSL_CONNECT_ERROR */
+    case 51: /* CURLE_PEER_FAILED_VERIFICATION (pre-7.62 number) */
+    case 53: /* CURLE_SSL_ENGINE_NOTFOUND */
+    case 54: /* CURLE_SSL_ENGINE_SETFAILED */
+    case 58: /* CURLE_SSL_CERTPROBLEM */
+    case 59: /* CURLE_SSL_CIPHER */
+    case 60: /* CURLE_PEER_FAILED_VERIFICATION */
+    case 77: /* CURLE_SSL_CACERT_BADFILE */
+    case 80: /* CURLE_SSL_SHUTDOWN_FAILED */
+    case 82: /* CURLE_SSL_CRL_BADFILE */
+    case 83: /* CURLE_SSL_ISSUER_ERROR */
+    case 90: /* CURLE_SSL_PINNEDPUBKEYNOTMATCH */
+    case 91: /* CURLE_SSL_INVALIDCERTSTATUS */
+        return HLM_NET_SECURE_CONNECTION;
+
+    case 5:  /* CURLE_COULDNT_RESOLVE_PROXY */
+    case 97: /* CURLE_PROXY */
+        return HLM_NET_PROXY;
+
+    case 28: /* CURLE_OPERATION_TIMEDOUT */
+        return HLM_NET_TIMEOUT;
+
+    case 7:  /* CURLE_COULDNT_CONNECT */
+    case 52: /* CURLE_GOT_NOTHING */
+    case 55: /* CURLE_SEND_ERROR */
+    case 56: /* CURLE_RECV_ERROR */
+        return HLM_NET_CONNECTION;
+
+    default:
+        return HLM_NET_UNKNOWN;
+    }
+}
+
 static int64_t clock_now(void *user)
 {
     (void)user;

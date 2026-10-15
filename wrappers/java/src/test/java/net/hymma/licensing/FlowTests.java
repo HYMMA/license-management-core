@@ -211,6 +211,82 @@ final class FlowTests {
                     LicenseException e = expectLicenseError(c::check);
                     assertEquals(LicenseException.NETWORK_FAILURE, e.code(),
                             "error code");
+                    // ...and it says what failed, naming the host to allow
+                    assertEquals(NetworkFailure.CONNECTION, e.networkFailure(),
+                            "network failure");
+                    assertEquals(NetworkFailure.CONNECTION, c.lastNetworkFailure(),
+                            "lastNetworkFailure");
+                    assertTrue(e.detail().startsWith("Could not connect to 127.0.0.1."),
+                            "detail names the host: " + e.detail());
+                }
+            });
+
+            t.test("407 from a proxy -> NETWORK_FAILURE / PROXY", () -> {
+                api.reset();
+                api.failStatus = 407;
+                try (LicenseClient c = client(jwks, base, null)) {
+                    LicenseException e = expectLicenseError(c::check);
+                    assertEquals(LicenseException.NETWORK_FAILURE, e.code(),
+                            "error code");
+                    assertEquals(NetworkFailure.PROXY, e.networkFailure(),
+                            "network failure");
+                }
+            });
+
+            t.test("import: genuine file installs, refusals leave the cache", () -> {
+                Path dir = Files.createTempDirectory("hlm-java-import-");
+                Path cache = dir.resolve("cache.lic");
+                String trial = jwsByCase.get("rs256-trial-valid");
+                String paid = jwsByCase.get("rs256-paid-valid");
+                Files.writeString(cache, trial);
+                try {
+                    try (LicenseClient c = client(jwks, DEAD_URL, cache.toString())) {
+                        assertEquals(cache.toString(), c.licensePath(), "licensePath");
+
+                        LicenseImportResult r = c.importLicense(
+                                jwsByCase.get("rs256-tampered-payload"));
+                        assertEquals(LicenseImportOutcome.SIGNATURE_INVALID, r.outcome(),
+                                "tampered");
+                        assertEquals(trial, Files.readString(cache), "cache untouched");
+
+                        r = c.importLicense("not a license at all");
+                        assertEquals(LicenseImportOutcome.NOT_A_LICENSE_FILE, r.outcome(),
+                                "garbage");
+
+                        r = c.importLicenseFile(dir.resolve("missing.lic"));
+                        assertEquals(LicenseImportOutcome.NOT_A_LICENSE_FILE, r.outcome(),
+                                "missing file");
+                        assertTrue(r.message().startsWith("The file could not be read"),
+                                "missing file message: " + r.message());
+                        assertEquals(trial, Files.readString(cache), "cache untouched");
+
+                        Path src = dir.resolve("downloaded.lic");
+                        Files.writeString(src, paid + "\r\n");
+                        r = c.importLicenseFile(src);
+                        assertTrue(r.succeeded(), "genuine: " + r);
+                        assertEquals("License file installed.", r.message(), "message");
+                        assertEquals(cache.toString(), r.installedPath().orElse(""),
+                                "installedPath");
+                        assertEquals("LIC_01KWVTRYMCAGWHTCVBYFGNJDA0", c.licenseId(),
+                                "adopted");
+                        assertEquals(paid, Files.readString(cache), "cache replaced");
+                    }
+                    try (LicenseClient other = new LicenseClient(LicenseClientOptions.builder()
+                            .baseUrl(DEAD_URL).productId(PRODUCT).clientApiKey("PUB_test")
+                            .jwksJson(jwks).machineId("OTHER" + "0".repeat(47))
+                            .machineName("SHOP-FLOOR-01").licensePath(cache.toString())
+                            .build())) {
+                        LicenseImportResult r = other.importLicense(trial);
+                        assertEquals(LicenseImportOutcome.WRONG_COMPUTER, r.outcome(),
+                                "other computer");
+                        assertTrue(r.message().contains("for the computer SHOP-FLOOR-01"),
+                                "message: " + r.message());
+                        assertEquals(paid, Files.readString(cache), "cache untouched");
+                    }
+                } finally {
+                    Files.deleteIfExists(dir.resolve("downloaded.lic"));
+                    Files.deleteIfExists(cache);
+                    Files.deleteIfExists(dir);
                 }
             });
         } finally {

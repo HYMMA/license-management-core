@@ -60,6 +60,24 @@ extern "C" {
     /// on this client ("" when none).
     pub fn hlm_ffi_last_error_detail(c: *mut HlmFfiClient) -> *const c_char;
 
+    /// Why the server could not be reached on the last call (`hlm_net_failure`:
+    /// 0 None, 1 Unknown, 2 NameResolution, 3 SecureConnection, 4 Proxy,
+    /// 5 Timeout, 6 Connection).
+    pub fn hlm_ffi_last_network_failure(c: *mut HlmFfiClient) -> c_int;
+    pub fn hlm_ffi_network_failure_name(failure: c_int) -> *const c_char;
+
+    /// Verify a license document exactly as the offline cache is verified,
+    /// then install it at the client's license path. Returns an
+    /// `hlm_import_result` (0 Installed .. 6 WriteFailed) or a negative
+    /// `hlm_err`. The outcome's end-user message is in
+    /// [`hlm_ffi_last_error_detail`].
+    pub fn hlm_ffi_import_license(c: *mut HlmFfiClient, document: *const c_char) -> c_int;
+    pub fn hlm_ffi_import_license_file(c: *mut HlmFfiClient, path: *const c_char) -> c_int;
+    pub fn hlm_ffi_import_result_name(result: c_int) -> *const c_char;
+
+    /// The license cache file this client reads and writes ("" when none).
+    pub fn hlm_ffi_license_path(c: *mut HlmFfiClient) -> *const c_char;
+
     /* Stateless helpers */
     pub fn hlm_ffi_err_name(err: c_int) -> *const c_char;
     /// Hardware fingerprint (Crockford Base32) into `out` (cap bytes).

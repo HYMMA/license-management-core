@@ -52,6 +52,46 @@ typedef enum {
 const char *hlm_err_str(int err);
 
 /* ------------------------------------------------------------------ */
+/* Network diagnosis                                                   */
+/* ------------------------------------------------------------------ */
+
+/* Why the license server could not be reached, as far as the transport can
+ * tell. HLM_E_HTTP alone used to read "could not connect" for everything,
+ * which sent users whose company DNS refused to resolve the server (Windows
+ * 11004, WSANO_DATA) to check an internet connection that was fine.
+ * Mirrors the .NET SDK's NetworkFailureReason (names via
+ * hlm_net_failure_str). */
+typedef enum {
+    HLM_NET_NONE = 0,              /* no transport failure recorded */
+    HLM_NET_UNKNOWN = 1,           /* failed; the cause could not be determined */
+    HLM_NET_NAME_RESOLUTION = 2,   /* DNS returned no address (company DNS filter) */
+    HLM_NET_SECURE_CONNECTION = 3, /* TLS handshake / certificate failure */
+    HLM_NET_PROXY = 4,             /* proxy refused, failed, or demanded auth (407) */
+    HLM_NET_TIMEOUT = 5,           /* no answer in time */
+    HLM_NET_CONNECTION = 6         /* address found; connection refused or dropped */
+} hlm_net_failure;
+
+/* "None", "Unknown", "NameResolution", "SecureConnection", "Proxy",
+ * "Timeout", "Connection". */
+const char *hlm_net_failure_str(hlm_net_failure f);
+
+/* End-user message for a transport failure that names the host to allow,
+ * e.g. for HLM_NET_NAME_RESOLUTION: "This computer's network could not find
+ * <host>. A company DNS filter or firewall is probably blocking it. Ask your
+ * IT team to allow <host>, or install the license file by hand."
+ * Same wording as the .NET SDK. Always NUL-terminates `out` (when cap > 0);
+ * returns HLM_OK, or HLM_E_BUFFER when the message was truncated. */
+int hlm_net_message(hlm_net_failure f, const char *host, char *out, size_t cap);
+
+/* Transport error -> reason. Pure mappings, available on every platform so
+ * they can be tested anywhere and reused by custom ports.
+ *  winhttp: a GetLastError() value after a failed WinHTTP call
+ *           (ERROR_WINHTTP_* 12xxx; Winsock 11001/11002/11004 also accepted).
+ *  curl:    a CURLcode returned by curl_easy_perform. */
+hlm_net_failure hlm_net_failure_from_winhttp(unsigned long error);
+hlm_net_failure hlm_net_failure_from_curl(int curl_code);
+
+/* ------------------------------------------------------------------ */
 /* Keys & crypto port                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -125,7 +165,7 @@ int hlm_jwk_parse(const char *jwk_json, size_t len,
 #define HLM_MAX_CODE 128
 #endif
 #ifndef HLM_MAX_ERROR_DETAIL
-#define HLM_MAX_ERROR_DETAIL 256
+#define HLM_MAX_ERROR_DETAIL 512 /* room for a network message naming the host twice */
 #endif
 #ifndef HLM_MAX_METADATA
 #define HLM_MAX_METADATA 8
@@ -219,7 +259,9 @@ hlm_status hlm_license_status(const hlm_license *lic, int64_t now);
 
 /* One call: verify + parse + evaluate.
  * `expected_product_id` / `expected_machine_id` may be NULL to skip binding
- * checks (a device that IS the fingerprint source should pass its own id). */
+ * checks (a device that IS the fingerprint source should pass its own id).
+ * On HLM_E_PRODUCT_MISMATCH / HLM_E_COMPUTER_MISMATCH `lic` holds the
+ * (verified) license, so a UI can say whose file it is. */
 int hlm_license_check(const char *jws, size_t jws_len,
                       const hlm_public_key *keys, size_t key_count,
                       const hlm_crypto *crypto,
@@ -227,6 +269,20 @@ int hlm_license_check(const char *jws, size_t jws_len,
                       const char *expected_machine_id,
                       int64_t now,
                       hlm_license *lic, hlm_status *status_out);
+
+/* hlm_license_check, binding to THIS machine under either identity: the
+ * license's computer must match `machine_id` (identity v2) or, when given,
+ * `machine_id_legacy` (the v1 fingerprint) — the .NET SDK's
+ * ComputerIdValidatorHandler rule. The client's offline load and the
+ * license-file import both verify through this one function. */
+int hlm_license_check_machine(const char *jws, size_t jws_len,
+                              const hlm_public_key *keys, size_t key_count,
+                              const hlm_crypto *crypto,
+                              const char *expected_product_id,
+                              const char *machine_id,
+                              const char *machine_id_legacy,
+                              int64_t now,
+                              hlm_license *lic, hlm_status *status_out);
 
 /* ------------------------------------------------------------------ */
 /* Device identity helper                                              */
@@ -284,9 +340,23 @@ typedef struct {
     size_t body_cap;
     size_t body_len;           /* filled by transport */
     int retry_after_seconds;   /* parsed Retry-After header; -1 if absent */
+    hlm_net_failure failure;   /* preset to HLM_NET_UNKNOWN by the client; a
+                                  transport that fails sets the cause (see
+                                  hlm_net_failure_from_winhttp/_curl) */
 } hlm_http_response;
 
-/* Return HLM_OK when a response (any status) was received. */
+/* Return HLM_OK when a response (any status) was received. A proxy's 407
+ * answer is a response too: the client classifies it as HLM_NET_PROXY.
+ *
+ * Built-in transports honor the system proxy the way a browser does:
+ * WinHTTP opens its session with WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
+ * (Windows 8.1+: WPAD/PAC auto-detection, the IE/Edge "Internet Options"
+ * proxy, falling back to WINHTTP_ACCESS_TYPE_DEFAULT_PROXY — the netsh
+ * winhttp proxy — on older Windows), and answers a proxy's 407
+ * Negotiate/NTLM challenge once with the signed-in user's Windows
+ * credentials (WINHTTP_AUTOLOGON_SECURITY_LEVEL_LOW, set on that request
+ * only after the proxy challenged it — never volunteered to a server).
+ * libcurl honors the http_proxy/https_proxy/no_proxy environment. */
 typedef struct {
     int (*send)(void *user, const hlm_http_request *req, hlm_http_response *resp);
     void *user;
@@ -329,6 +399,61 @@ typedef struct {
 /* File-based storage. `path` must outlive the storage. */
 typedef struct { const char *path; } hlm_storage_file_cfg;
 hlm_storage hlm_storage_file(hlm_storage_file_cfg *cfg);
+
+/* ------------------------------------------------------------------ */
+/* Installing a license file by hand                                   */
+/* ------------------------------------------------------------------ */
+
+/* Outcome of hlm_license_import / hlm_client_import (non-negative; a
+ * negative return is an hlm_err for a programming error such as a NULL
+ * argument or no storage port). Mirrors the .NET SDK's LicenseImportOutcome;
+ * names via hlm_import_result_str. */
+typedef enum {
+    HLM_IMPORT_INSTALLED = 0,         /* verified and written to storage */
+    HLM_IMPORT_NOT_A_LICENSE = 1,     /* not a signed license this library reads */
+    HLM_IMPORT_NO_PUBLIC_KEY = 2,     /* no vendor key to verify it with */
+    HLM_IMPORT_SIGNATURE_INVALID = 3, /* altered, or another vendor's file */
+    HLM_IMPORT_WRONG_PRODUCT = 4,     /* issued for a different product */
+    HLM_IMPORT_WRONG_COMPUTER = 5,    /* issued for a different computer */
+    HLM_IMPORT_WRITE_FAILED = 6       /* storage write failed */
+} hlm_import_result;
+
+/* "Installed", "NotALicenseFile", "NoPublicKey", "SignatureInvalid",
+ * "WrongProduct", "WrongComputer", "WriteFailed". */
+const char *hlm_import_result_str(int result);
+
+/* End-user message for an import outcome (the .NET SDK's wording). `lic`
+ * (may be NULL) names the product / computer the file was issued for;
+ * `location` (may be NULL) names where the write was attempted. Always
+ * NUL-terminates `out` (when cap > 0); HLM_E_BUFFER when truncated. */
+int hlm_import_message(int result, const hlm_license *lic,
+                       const char *location, char *out, size_t cap);
+
+/* Install a license file the user obtained OUTSIDE the online flow —
+ * downloaded from the vendor's portal or received by email — on a computer
+ * that cannot reach the license server (DNS-filtered or proxy-only networks,
+ * air-gapped machines).
+ *
+ * The document is checked exactly as an offline launch checks the cache
+ * (hlm_license_check_machine: vendor signature, product, this machine under
+ * identity v2 or the legacy id) BEFORE anything is written, so a wrong or
+ * tampered file never displaces a working one; validity dates and status
+ * are left to the normal check. Leading/trailing whitespace and a UTF-8 BOM
+ * are tolerated (the trimmed token is what gets stored).
+ *
+ * `keys` may be NULL/0 (=> HLM_IMPORT_NO_PUBLIC_KEY); `product_id`,
+ * `machine_id`, `crypto` and a writable `storage` are required (HLM_E_ARG).
+ * `machine_id_legacy` may be NULL. `lic_out` (may be NULL) receives the
+ * license whenever it could be verified and parsed — including on
+ * WRONG_PRODUCT / WRONG_COMPUTER, so a UI can say whose file it is. */
+int hlm_license_import(const char *document, size_t len,
+                       const hlm_public_key *keys, size_t key_count,
+                       const hlm_crypto *crypto,
+                       const char *product_id,
+                       const char *machine_id,
+                       const char *machine_id_legacy,
+                       const hlm_storage *storage,
+                       hlm_license *lic_out);
 
 /* Unix-seconds clock; on MCUs wire this to the RTC. */
 typedef struct {
@@ -410,7 +535,12 @@ typedef struct {
     hlm_status status;
     int has_license;
     int last_http_status;
-    char last_error[HLM_MAX_ERROR_DETAIL]; /* server's refusal detail ("" if none) */
+    char last_error[HLM_MAX_ERROR_DETAIL]; /* server's refusal detail, the
+                                  network-failure message (HLM_E_HTTP), or the
+                                  import outcome message ("" if none) */
+    hlm_net_failure last_net_failure; /* transport outcome of the last request
+                                  (HLM_NET_NONE once a response arrived) —
+                                  also set when check() fell back to the cache */
     int64_t eval_now;          /* trusted evaluation time of the last call */
     int64_t time_floor;        /* highest trusted time observed; the local-
                                   clock fallback never evaluates below it */
@@ -434,6 +564,14 @@ int hlm_client_deactivate(hlm_client *c);
 
 /* Force a fresh signed license from the server (ignores cache). */
 int hlm_client_refresh(hlm_client *c);
+
+/* hlm_license_import with this client's keys, product, machine ids and
+ * storage. Never touches the network. On HLM_IMPORT_INSTALLED the client
+ * adopts the license (has_license/license/status, evaluated at the local
+ * clock, never below the trusted-time floor). Every outcome leaves its
+ * end-user message in c->last_error. Returns an hlm_import_result, or
+ * HLM_E_ARG (no storage port / NULL argument). */
+int hlm_client_import(hlm_client *c, const char *document, size_t len);
 
 #ifdef __cplusplus
 }

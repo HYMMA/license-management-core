@@ -23,7 +23,9 @@ require __DIR__ . '/../src/LicenseClient.php';
 
 use Hymma\Licensing\LicenseClient;
 use Hymma\Licensing\LicenseException;
+use Hymma\Licensing\LicenseImportOutcome;
 use Hymma\Licensing\LicenseStatus;
+use Hymma\Licensing\NetworkFailure;
 use Hymma\Licensing\SignedFormat;
 
 const PRODUCT = 'PRD_01KWWPEPM0N070BDAHJ7G09RGV';
@@ -244,11 +246,59 @@ try {
     echo "failure: dead URL without cache -> NETWORK_FAILURE\n";
     setState(['license_case' => 'rs256-trial-valid']);
     $c = makeClient(DEAD_BASE);
-    expectError(
+    $e = expectError(
         fn () => $c->check(),
         [LicenseException::NETWORK_FAILURE],
         'check() against dead URL -> code -7'
     );
+    check(
+        $e !== null && $e->networkFailure === NetworkFailure::Connection
+            && $c->lastNetworkFailure() === NetworkFailure::Connection,
+        'network failure classified as Connection'
+    );
+    check(
+        $e !== null && str_starts_with($e->detail, 'Could not connect to 127.0.0.1.'),
+        'network failure message names the host'
+    );
+    $c->close();
+    unset($c);
+
+    // ------------------------------------------------------------------ //
+    // license file installed by hand                                      //
+    // ------------------------------------------------------------------ //
+    echo "import: genuine file installs, refusals leave the cache\n";
+    $cases = array_column($vec['Cases'], 'Jws', 'Name');
+    $trial = $cases['rs256-trial-valid'];
+    $paid = $cases['rs256-paid-valid'];
+    file_put_contents($licPath, $trial);
+    $c = makeClient(DEAD_BASE, $licPath);
+    check($c->licensePath() === $licPath, 'licensePath exposed');
+
+    $r = $c->importLicense($cases['rs256-tampered-payload']);
+    check($r->outcome === LicenseImportOutcome::SignatureInvalid, 'tampered -> SignatureInvalid');
+    check(file_get_contents($licPath) === $trial, 'tampered: cache untouched');
+
+    $r = $c->importLicense('not a license at all');
+    check($r->outcome === LicenseImportOutcome::NotALicenseFile, 'garbage -> NotALicenseFile');
+
+    $r = $c->importLicenseFile(__DIR__ . '/missing.lic');
+    check(
+        $r->outcome === LicenseImportOutcome::NotALicenseFile
+            && str_starts_with($r->message, 'The file could not be read'),
+        'missing file -> NotALicenseFile, says why'
+    );
+
+    $src = __DIR__ . '/import-test-downloaded.lic';
+    file_put_contents($src, $paid . "\r\n");
+    $r = $c->importLicenseFile($src);
+    @unlink($src);
+    check(
+        $r->succeeded() && $r->message === 'License file installed.'
+            && $r->installedPath === $licPath,
+        'genuine -> Installed'
+    );
+    check($c->licenseId() === 'LIC_01KWVTRYMCAGWHTCVBYFGNJDA0', 'genuine: license adopted');
+    check(file_get_contents($licPath) === $paid, 'genuine: cache replaced');
     $c->close();
     unset($c);
 } finally {
