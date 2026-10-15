@@ -72,7 +72,11 @@ object TrialLicense() => new
     Status = "ValidTrial",
     LiveMode = false,
     TrialEndDate = "2026-07-20T13:44:38.2833333",
-    Expires = "2026-10-08T01:17:58.115645Z",
+    // FILE expiries sit in 2098 on purpose. The flow tests run against the real clock, and
+    // the client never evaluates below it (clock-tamper floor), so a 2026 expiry turned every
+    // flow test red the day it passed (2026-10-08). Cases that need an expired FILE use a
+    // fixed NowUtc in 2098 instead; trial-end and receipt dates stay in 2026.
+    Expires = "2098-10-08T01:17:58.115645Z",
     Product = Product(),
     Computer = Computer(),
 };
@@ -86,14 +90,14 @@ object PaidLicense() => new
     LiveMode = true,
     TrialEndDate = "2026-05-25T08:00:00",
     FirstPaidOn = "2026-06-01T10:30:00",
-    Expires = "2026-12-01T00:00:00Z",
+    Expires = "2098-12-01T00:00:00Z",
     Receipt = new
     {
         Id = "RCP_01KWWQZZZZN070BDAHJ7G09AAA",
         Code = "",
         Qty = 10,
         BuyerEmail = "jane@example.com",
-        Expires = "2027-06-01T00:00:00Z",
+        Expires = "2099-06-01T00:00:00Z", // after the 2098 file expiry, as before
     },
     Product = Product(),
     Computer = Computer(),
@@ -104,7 +108,7 @@ object LegacyNoStatusTrial() => new
 {
     Id = "LIC_01KWVTRYMCAGWHTCVBYFGNJDA0",
     TrialEndDate = "2026-08-01T00:00:00",
-    Expires = "2026-10-01T00:00:00Z",
+    Expires = "2098-10-01T00:00:00Z",
     Product = Product(),
     Computer = Computer(),
 };
@@ -116,7 +120,7 @@ object ReceiptExpiredLicense() => new
     Status = "ReceiptExpired",
     LiveMode = true,
     TrialEndDate = "2025-05-25T08:00:00",
-    Expires = "2026-12-01T00:00:00Z",
+    Expires = "2098-12-01T00:00:00Z",
     Receipt = new
     {
         Id = "RCP_01KWWQZZZZN070BDAHJ7G09AAA",
@@ -142,7 +146,7 @@ AddCase("rs256-trial-valid", rsTrial, true, "2026-07-10T00:00:00Z",
         "ValidTrial", "LIC_01KWVTRYMCAGWHTCVBYFGNJDA0");
 AddCase("rs256-trial-lapsed", rsTrial, true, "2026-07-25T00:00:00Z",
         "ValidTrial", null); // server status trusted until FILE expiry...
-AddCase("rs256-file-expired", rsTrial, true, "2026-11-01T00:00:00Z",
+AddCase("rs256-file-expired", rsTrial, true, "2098-11-01T00:00:00Z",
         "Expired", null);
 
 var rsPaid = SignRs256(PaidLicense());
@@ -169,7 +173,7 @@ object UnregisteredLicense() => new
     Status = "ReceiptUnregistered",
     LiveMode = true,
     TrialEndDate = "2026-05-25T08:00:00",
-    Expires = "2026-12-01T00:00:00Z",
+    Expires = "2098-12-01T00:00:00Z",
     Product = Product(),
     Computer = Computer(),
 };
