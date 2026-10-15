@@ -52,7 +52,7 @@ static int checks;
 
 #define T_2026_07_10 1783641600LL /* inside trial */
 #define T_2026_08_15 1786752000LL /* after legacy trial end (08-01) */
-#define T_2026_11_01 1793491200LL /* after trial file expiry (10-08) */
+#define T_2098_11_01 4065638400LL /* after trial file expiry (2098-10-08), before paid (2098-12-01) */
 
 static char vec_src[131072];
 static hlm_json_tok vec_toks[4096];
@@ -63,8 +63,8 @@ static uint8_t ec_keybuf[128];
 static hlm_public_key keys[2];
 static size_t key_count;
 
-static char jws_trial[8192];        /* rs256-trial-valid   Expires 2026-10-08 */
-static char jws_paid[8192];         /* rs256-paid-valid    Expires 2026-12-01 */
+static char jws_trial[8192];        /* rs256-trial-valid   Expires 2098-10-08 */
+static char jws_paid[8192];         /* rs256-paid-valid    Expires 2098-12-01 */
 static char jws_unregistered[8192]; /* rs256-receipt-unregistered             */
 static char jws_legacy[8192];       /* rs256-legacy-trial  (no Status claim)  */
 static char jws_tampered[8192];     /* rs256-tampered-payload                 */
@@ -413,13 +413,13 @@ static void test_expired_cache_refetches(void)
         STEP_POST_COMPUTER(201),
         STEP_GET_COMPUTER,
         STEP_POST_LICENSE(201),
-        STEP_GET_LICENSE(jws_paid), /* paid file expires 2026-12-01 */
+        STEP_GET_LICENSE(jws_paid), /* paid file expires 2098-12-01 */
     };
     mock_http http = { steps, 4, 0, 0 };
     mock_store store = { {0}, 0, 0 };
 
-    store_preload(&store, jws_trial); /* trial file expires 2026-10-08 */
-    setup(&g_client, &http, &store, T_2026_11_01, 0, NULL, NULL);
+    store_preload(&store, jws_trial); /* trial file expires 2098-10-08 */
+    setup(&g_client, &http, &store, T_2098_11_01, 0, NULL, NULL);
     CHECK(hlm_client_check(&g_client) == HLM_OK, "expired cache: ok");
     CHECK(g_client.status == HLM_STATUS_VALID, "expired cache: renewed");
     CHECK(http.next == 4, "expired cache: full chain ran");
@@ -432,7 +432,7 @@ static void test_expired_cache_offline(void)
     mock_store store = { {0}, 0, 0 };
 
     store_preload(&store, jws_trial);
-    setup(&g_client, &http, &store, T_2026_11_01, 0, NULL, NULL);
+    setup(&g_client, &http, &store, T_2098_11_01, 0, NULL, NULL);
     CHECK(hlm_client_check(&g_client) == HLM_OK, "expired offline: surfaced");
     CHECK(g_client.status == HLM_STATUS_EXPIRED, "expired offline: Expired");
     CHECK(g_client.has_license == 1, "expired offline: license retained");
@@ -906,7 +906,7 @@ static void test_offline_fallback_keeps_cause(void)
     mock_store store = { {0}, 0, 0, 0 };
 
     store_preload(&store, jws_trial);
-    setup(&g_client, &http, &store, T_2026_11_01, 0, NULL, NULL);
+    setup(&g_client, &http, &store, T_2098_11_01, 0, NULL, NULL);
     CHECK(hlm_client_check(&g_client) == HLM_OK, "offline fallback: ok");
     CHECK(g_client.status == HLM_STATUS_EXPIRED, "offline fallback: Expired");
     CHECK(g_client.last_net_failure == HLM_NET_NAME_RESOLUTION,
