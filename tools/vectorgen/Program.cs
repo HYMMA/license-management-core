@@ -242,6 +242,11 @@ var fingerprints = new[]
           Expected = Fingerprint("W1KS03Z106A", "BFEBFBFF000906EA") },
     new { Components = new[] { "stm32-uid-0123456789abcdef" },
           Expected = Fingerprint("stm32-uid-0123456789abcdef") },
+    // Windows identity v2 (hlm_machine_id_win_v2): the fingerprint of the MachineGuid alone. Added by hand to
+    // vectors.json with v2 (be2ea68) and lost when the file was regenerated (baba72f); generated here so it stays.
+    // Expected HX00R9BP27PNTC60WSG7NHGGEGR7VYH4SXRAHT9C7T0MFNKX5HR0, as 0.1.5 shipped it.
+    new { Components = new[] { "f47ac10b-58cc-4372-a567-0e02b2c3d479" },
+          Expected = Fingerprint("f47ac10b-58cc-4372-a567-0e02b2c3d479") },
 };
 
 // ---- output -------------------------------------------------------------------
