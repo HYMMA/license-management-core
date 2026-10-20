@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Tests
+
+- **Machine identity v2 is pinned again.** The known-answer vector for
+  `hlm_machine_id_win_v2` (the fingerprint of the MachineGuid alone:
+  `f47ac10b-58cc-4372-a567-0e02b2c3d479` →
+  `HX00R9BP27PNTC60WSG7NHGGEGR7VYH4SXRAHT9C7T0MFNKX5HR0`) was added to
+  `vectors.json` by hand with v2 and dropped when the file was regenerated
+  for the fixture expiries in 0.2.0. It is back, with the value 0.1.5
+  shipped, and `tools/vectorgen` now generates it so a regeneration keeps it.
+  No behaviour change: the v2 code is the same since 0.1.5.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added
